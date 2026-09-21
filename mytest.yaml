@@ -1,0 +1,4 @@
+train_dir: /content/my_test_images/
+val_dir: /content/my_test_images/
+train_annotation_file: null
+val_annotation_file: null
