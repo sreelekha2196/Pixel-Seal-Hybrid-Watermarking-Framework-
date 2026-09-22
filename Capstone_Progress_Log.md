@@ -47,10 +47,10 @@ model = model.eval()
 
 image_paths = [
     "assets/imgs/1.jpg",
-    "../download.jpg",
-    "../download (1).jpg",
-    "../download (2).jpg",
-    "../download (3).jpg",
+    "/content/my_test_images/download.jpg",
+    "/content/my_test_images/download (1).jpg",
+    "/content/my_test_images/download (2).jpg",
+    "/content/my_test_images/download (3).jpg",
 ]
 
 for path in image_paths:
@@ -318,41 +318,137 @@ print("Config created")
 
 ---
 
-### 4.9 Clean reproduction steps (skip the dead ends above)
+### 4.9 Reproduction steps — current process (GitHub-based, no manual upload)
 
-If starting completely from scratch, only these steps are actually needed, in order:
+This replaces the original manual-upload process — now that test images and the dataset config live in the project's GitHub repo, there's no need to organize or upload anything by hand each session. Only these steps are needed, in order:
 
-1. Open Meta's Colab notebook (`facebookresearch/videoseal` → `notebooks/colab.ipynb`).
-2. **Set the runtime to GPU first**, before running anything: Runtime → Change runtime type → GPU (T4) → Save.
-3. Run the notebook's setup/install cells from the top (clones the repo, installs dependencies).
+1. Open the notebook directly in Colab using this link, which opens this project's own saved notebook (already containing the setup, model-load, restore, and evaluation cells):
+   `https://colab.research.google.com/github/sreelekha2196/Pixel-Seal-Hybrid-Watermarking-Framework-/blob/main/notebooks/colab.ipynb`
+   (Project repo: `https://github.com/sreelekha2196/Pixel-Seal-Hybrid-Watermarking-Framework-`)
+2. **Set the runtime to GPU first**, before running anything: Runtime → Change runtime type → GPU (T4) → Save. This must be done manually every fresh session — it does not carry over from previous sessions.
+3. Run the setup/install cells (clones `facebookresearch/videoseal`, installs dependencies).
 4. Run `model = videoseal.load("pixelseal")` (auto-downloads the checkpoint).
-5. Upload your test images via the Colab file sidebar (they land in `/content/`, one level above the `/content/videoseal` working directory).
-6. Run the "organize test images" cell (Section 4.7, Cell 1) to copy images into `/content/my_test_images/`.
-7. Run the "create dataset config" cell (Section 4.7, Cell 2) to write `mytest.yaml`.
-8. Run the evaluation command (Section 4.7, Cell 3):
+5. Run the restore cell (Section 5's absolute-path version) — clones this project's repo and restores `mytest.yaml` and the test images from it. No manual upload or image organizing needed; this is all handled by the cell.
+6. Run the evaluation command:
    ```python
    !cd /content/videoseal && python -m videoseal.evals.full \
        --checkpoint ckpts/pixelseal_checkpoint.pth \
        --dataset mytest \
        --num_samples 4
    ```
-9. Results land in `outputs/metrics.csv` inside the Colab session — download it if you want to keep it permanently, since Colab wipes `/content` on disconnect.
+7. Results land in `outputs/metrics.csv` inside the Colab session — download it if you want to keep it permanently, since Colab wipes `/content` on disconnect.
+
+Alternatively, once GPU runtime is set (step 2), Runtime → Run all executes steps 3–6 automatically in one go, since the notebook now contains all of them in the correct order.
 
 ---
 
-## 5. Next Step (In Progress)
+## 5. GitHub-Based Persistence & Reproducibility (COMPLETE)
+
+**Goal:** Stop needing to manually re-upload test images and retype the dataset config every time a Colab session resets. Set up the project's GitHub repo (`sreelekha2196/Pixel-Seal-Hybrid-Watermarking-Framework-`) so a fresh session can restore everything with a couple of commands, then prove this actually works by re-running the full attack evaluation from a clean session using only the GitHub-restored files.
+
+**What went to GitHub:**
+- `test_images.zip` — the 4 personal test images, zipped
+- `mytest.yaml` — the custom dataset config pointing at those images
+- `notebooks/colab.ipynb` — the actual working notebook (already saved here from a much earlier session)
+
+**What stays external (not duplicated into the repo):**
+- The `videoseal` repo itself (Meta's code — cloned fresh each session)
+- The Pixel Seal checkpoint (~200MB+, auto-downloads each session, not worth storing in git)
+
+---
+
+### 5.1 Building the restore cell — three bugs encountered
+
+**Goal:** Write one notebook cell that, run after Meta's setup cells, restores everything needed (test images + dataset config) from GitHub instead of manual upload.
+
+**Bug 1 — GPU/CPU mismatch recurred.** Opening a fresh Colab session (including one opened directly from the GitHub-hosted notebook) does **not** remember the GPU runtime setting from a previous session — it resets to CPU-only by default every time. Same `AssertionError: Torch not compiled with CUDA enabled` as before. **Fix:** manually set Runtime → Change runtime type → GPU before running anything, every single session. This is a recurring manual step that cannot be automated away — worth remembering as a standing habit, not a one-time fix.
+
+**Bug 2 — Cell ordering.** The restore cell was initially placed *before* Meta's own `videoseal` clone/install cells in the notebook. Running "Run all" caused the restore cell's `!cp .../mytest.yaml videoseal/configs/datasets/` to fail with `No such file or directory`, since the `videoseal` folder didn't exist yet at that point in execution. **Fix:** moved the restore cell to run after the model-load cell, and added `mkdir -p` before every `cp`/copy operation so the destination folder is guaranteed to exist regardless of execution order.
+
+**Bug 3 — Silent working-directory drift (`%cd` persistence) caused a doubled nested path.** Using relative paths (e.g., `Pixel-Seal-Hybrid-Watermarking-Framework-/mytest.yaml` instead of `/content/Pixel-Seal-Hybrid-Watermarking-Framework-/mytest.yaml`), a run produced this surprising result when checked with `!find / -name "mytest.yaml"`:
+```
+/content/videoseal/Pixel-Seal-Hybrid-Watermarking-Framework-/mytest.yaml
+/content/videoseal/videoseal/configs/datasets/mytest.yaml
+```
+**What this meant:** unlike `!cd` (which only affects the single line it's on), a `%cd` magic command used earlier in the notebook silently persists across *all* subsequent cells in a Colab session. This meant the shell's actual working directory was `/content/videoseal`, not `/content`, when the restore cell ran — so every relative path in that cell landed one directory too deep, and the evaluation script (which itself does `cd /content/videoseal && ...`) could never find the file at the path it expected.
+
+**Fix:** rewrote the restore cell using **fully absolute paths everywhere** (`/content/...`), which cannot be affected by whatever the shell's current directory happens to be:
+```python
+import os
+
+if not os.path.exists('/content/Pixel-Seal-Hybrid-Watermarking-Framework-'):
+    !git clone https://github.com/sreelekha2196/Pixel-Seal-Hybrid-Watermarking-Framework- /content/Pixel-Seal-Hybrid-Watermarking-Framework-
+else:
+    print("Repo already cloned, skipping.")
+
+!mkdir -p /content/videoseal/configs/datasets
+!cp /content/Pixel-Seal-Hybrid-Watermarking-Framework-/mytest.yaml /content/videoseal/configs/datasets/
+!mkdir -p /content/my_test_images
+!unzip -o /content/Pixel-Seal-Hybrid-Watermarking-Framework-/test_images.zip -d /content/my_test_images/
+
+print(os.path.exists('/content/videoseal/configs/datasets/mytest.yaml'))
+```
+The final `print(os.path.exists(...))` line is a deliberate built-in sanity check — it prints an unambiguous `True`/`False` in the same cell, rather than trusting `!ls` (subject to the same directory-drift problem) or the Colab file sidebar (see next bug).
+
+**Side note — Colab file sidebar doesn't auto-refresh.** After fixing the above, the sidebar's file browser still visually showed `mytest.yaml` missing from `videoseal/configs/datasets/`, even after clicking refresh. The actual command-line output (`!ls`, `os.path.exists`) was correct the whole time — the sidebar display was simply stale. **Lesson: trust command output over the visual file browser when they disagree.**
+
+---
+
+### 5.2 Final notebook cell order (as saved to GitHub)
+
+1. Meta's original setup cells — clone `facebookresearch/videoseal`, install dependencies
+2. Model load cell — `import videoseal`, `model = videoseal.load("pixelseal")`
+3. Restore cell — the absolute-path version above (clone this project's repo, restore `mytest.yaml` and test images)
+4. Evaluation script cell (Section 4.9, step 6)
+
+Manual step required every session regardless of notebook setup: **set Runtime to GPU before running anything.**
+
+---
+
+### 5.3 Verification — full reproducibility confirmed
+
+**Test 1 — baseline embed/detect, using images restored from GitHub instead of manual upload:**
+
+| Image | Watermarked Accuracy | Control Accuracy |
+|---|---|---|
+| assets/imgs/1.jpg (sample) | 100.0 | 48.8 |
+| download.jpg | 100.0 | 56.6 |
+| download (1).jpg | 99.2 | 50.0 |
+| download (2).jpg | 100.0 | 51.2 |
+| download (3).jpg | 100.0 | 47.7 |
+
+Matches the original manual-upload run closely (99.2–100% watermarked vs. ~48–57% control) — confirms the GitHub-restore pipeline produces the same result as manual upload, with the small numeric differences expected since Pixel Seal embeds a fresh random message each run.
+
+**Test 2 — full attack-evaluation script, second run:**
+
+| Metric | First run (Section 4.8) | Second run (this session) |
+|---|---|---|
+| PSNR | 29.75 dB | 29.77 dB |
+| SSIM | 0.928 | 0.928 |
+| LPIPS | 0.041 | 0.044 |
+| Weakest attack: Crop_0.32 | 60.2% | 54.8% |
+| Weakest attack: Resize_0.32 | 68.5% | 65.4% |
+
+**Interpretation:** Image quality metrics are essentially identical between runs. Robustness numbers follow the same overall pattern (heavy cropping and heavy downscaling are the consistent weak points), though the *exact* set of attacks that cross the p > 0.05 "not statistically significant" threshold shifted slightly between runs (first run: Rotate_90, Resize_0.45, Crop_0.32; second run: Resize_0.32, Crop_0.32). **`Crop_0.32` (keeping only 32% of the image area) is the one attack that was non-significant in both runs** — the most defensible specific weak point to cite, given the small-sample-size caveat noted in Section 4.8 still applies.
+
+**Status: ✅ Complete.** The entire pipeline — repo clone, model load, test data restore, attack evaluation — now reproduces end-to-end from a completely fresh Colab session using only the GitHub repo, with no manual file uploads. This is a meaningful reproducibility result worth stating explicitly in the final report's methodology section.
+
+---
+
+## 6. Next Step (In Progress)
 
 **Task:** Begin building the C2PA side of the hybrid framework — installing `c2pa-python` and getting a basic sign/verify test working on its own, independent of Pixel Seal, before wiring the two together.
 **Status:** Not yet started — picking up here in the next session.
 
 ---
 
-## 6. Log of Sessions
+## 7. Log of Sessions
 
 | Date | What was done |
 |---|---|
 | (session 1) | Set up Colab, resolved 4 setup/debugging issues, achieved working Pixel Seal baseline (100% watermarked accuracy on sample image). |
 | (session 2) | Re-tested baseline across 4 additional personal images — confirmed consistent results (98.8–100% watermarked vs. ~47–55% control). |
 | (session 3) | Ran Pixel Seal's official attack-evaluation script. Worked through 3 setup issues (working directory, CPU/GPU mismatch, missing dataset config) and 2 Colab runtime resets. Successfully produced full robustness/imperceptibility metrics across dozens of attacks — this is now the official pre-hybrid baseline for later comparison. |
+| (session 4) | Set up GitHub-based persistence (test images + dataset config pushed to repo) to avoid manual re-upload each session. Debugged 3 issues (recurring GPU/CPU reset, cell ordering, a `%cd`-caused doubled-path bug) and cleaned up a duplicate progress-log file. Verified full reproducibility: re-ran both the baseline test and the full attack-evaluation script from a clean session using only GitHub-restored files, with consistent results. |
 
 *(Add a new row each session — just a couple of lines is enough to keep this useful without becoming a chore to maintain.)*
