@@ -435,14 +435,155 @@ Matches the original manual-upload run closely (99.2–100% watermarked vs. ~48�
 
 ---
 
-## 6. Next Step (In Progress)
+## 6. C2PA Sign/Verify — Standalone Validation (COMPLETE)
 
-**Task:** Begin building the C2PA side of the hybrid framework — installing `c2pa-python` and getting a basic sign/verify test working on its own, independent of Pixel Seal, before wiring the two together.
+**Goal:** Prove that C2PA's core mechanism — cryptographically **signing** a manifest (a data record describing an image's origin) and then **verifying** that signature — works correctly on its own, before combining it with Pixel Seal.
+
+**What "sign/verify" actually means here (important distinction):** C2PA does **not** encrypt the image. Encryption would scramble the image so it can't be viewed without a decryption key — that's not the goal at all; the image must remain normally viewable. What actually happens is **digital signing**: a manifest (a structured record stating things like who/what created the image and what action was taken, e.g. "this was AI-generated") is attached to the image file, and a cryptographic signature is computed over that manifest plus the image data using a private key. Anyone can later **read** that manifest and **verify** the signature using the corresponding public certificate — this confirms two separate things: (1) the manifest's content and the image's data haven't been altered since signing (tamper detection, via a cryptographic hash), and (2) the signature was genuinely produced by whoever holds that private key (authenticity, via public-key cryptography). So concretely, this session tested: building a manifest, signing an image with it (embedding the signed manifest into the file), then reading that file back and checking whether the embedded signature and hash validate correctly.
+
+**Where this ran:** A separate, blank Colab notebook (not the Pixel Seal one) — deliberately kept apart so this work can't accidentally overwrite the existing `notebooks/colab.ipynb`. No GPU, no `videoseal`, no checkpoint needed for any of this — C2PA signing is lightweight and CPU-only.
+
+---
+
+### 6.1 Installing c2pa-python
+
+**Cell run:**
+```python
+!pip install c2pa-python cryptography
+```
+
+**Result:** Installed successfully — `c2pa-python` version 0.37.10 (the library itself later reported internal SDK version 0.90.19 when run — these are two different version numbers: one for the Python package, one for the underlying Rust engine it wraps).
+
+---
+
+### 6.2 Getting test fixtures (certificate, private key, sample image)
+
+**Why this step is needed at all:** to sign anything cryptographically, two specific pieces are required: (1) a **private key** — a secret used to actually produce the signature, and (2) a matching **digital certificate** — a public document that contains the corresponding public key (used by anyone to verify the signature) plus a statement of who issued/vouches for that key. Getting a certificate genuinely trusted by every verifier normally means obtaining one from a recognized Certificate Authority, which costs money and requires identity verification — not practical or necessary for an early proof-of-concept. Since the goal at this stage was only to confirm the signing/verification *mechanics* work correctly — not yet to establish a trusted real-world identity — a ready-made private key + certificate pair was needed just to run the process end-to-end at all.
+
+**Solution used:** rather than generating a certificate from scratch, Adobe's own official example script uses a test private key and certificate that are already bundled inside the `c2pa-python` GitHub repo, created specifically for their own test suite. Using these skipped the separate task of generating a certificate, letting this session focus purely on proving sign/verify works.
+
+**Cell run:**
+```python
+!git clone https://github.com/contentauth/c2pa-python /content/c2pa-python
+```
+
+**Result:** Cloned successfully. This gave access to `tests/fixtures/es256_certs.pem` (the test certificate), `tests/fixtures/es256_private.key` (the matching private key), and `tests/fixtures/A.jpg` (a sample image to sign).
+
+---
+
+### 6.3 First attempt — Context object used outside its scope
+
+**What this step was trying to achieve:** run actual working code that (1) loads the certificate and private key, (2) defines a manifest describing the image (naming this project as the "claim generator" and recording a `c2pa.created` action), (3) uses the private key to cryptographically sign that manifest via the ECDSA/SHA-256 algorithm, (4) embeds the signed manifest into a copy of `A.jpg` producing a new signed file, and (5) immediately reads that new file back to confirm the embedded manifest and signature are present and valid — completing the full sign-then-verify loop in one script.
+
+**Cell run (first version — structured incorrectly):**
+```python
+with c2pa.Context() as context:
+    # ... signing code ...
+    # (context block ends here)
+
+# Reading happens AFTER the context block has already closed:
+with open(output_dir + "A_signed.jpg", "rb") as file:
+    with c2pa.Reader("image/jpeg", file, context=context) as reader:
+        print(reader.json())
+```
+
+**Output:**
+```
+C2paError: Context is not valid
+```
+
+**What it meant:** the `context` object (which the library uses internally to manage its resources) is only valid while its own `with` block is still open — once that block ends, the context is cleaned up and can't be reused. The reading step above tried to reuse the `context` variable *after* it had already closed. **Fix:** nest the reading step *inside* the same `with c2pa.Context()` block as the signing step, rather than placing it after.
+
+---
+
+### 6.4 Successful run — sign and verify, with expected result
+
+**Purpose of this cell:** the corrected version of the same script — actually produce a signed image file, then immediately read it back to check, concretely: (a) did the manifest we defined (title, claim generator name, the "created" action) get embedded correctly? (b) does the cryptographic hash of the image data still match what was recorded at signing time, proving nothing was altered in between? (c) is the digital signature itself mathematically valid, i.e. genuinely produced by the private key matching the certificate? and (d) is the certificate itself trusted — does it chain up to a recognized root Certificate Authority?
+
+**What was expected going in:** since a test/self-signed certificate was used rather than one from a recognized CA (a deliberate, anticipated limitation — see Section 6.2), the certificate-trust check specifically was expected to come back flagged as untrusted. Everything else — hash matching, signature validity, structural correctness of the manifest — was expected to pass if the signing/verification code itself was working correctly.
+
+**Final working code** (fixture paths point to the cloned repo; the read step is now correctly nested inside the `Context` block):
+
+```python
+import os
+import c2pa
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+
+fixtures_dir = "/content/c2pa-python/tests/fixtures/"
+output_dir = "/content/c2pa_output/"
+os.makedirs(output_dir, exist_ok=True)
+
+print("c2pa version:", c2pa.sdk_version())
+
+with open(fixtures_dir + "es256_certs.pem", "rb") as f:
+    certs = f.read()
+with open(fixtures_dir + "es256_private.key", "rb") as f:
+    key = f.read()
+
+def callback_signer_es256(data: bytes) -> bytes:
+    private_key = serialization.load_pem_private_key(key, password=None, backend=default_backend())
+    return private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+manifest_definition = {
+    "claim_generator_info": [{"name": "pixelseal_c2pa_hybrid", "version": "0.0.1"}],
+    "format": "image/jpeg",
+    "title": "Test Signed Image",
+    "ingredients": [],
+    "assertions": [{
+        "label": "c2pa.actions",
+        "data": {"actions": [{"action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"}]}
+    }]
+}
+
+with c2pa.Context() as context:
+    print("\nSigning the image file...")
+    with c2pa.Signer.from_callback(callback_signer_es256, c2pa.C2paSigningAlg.ES256, certs.decode('utf-8'), "http://timestamp.digicert.com") as signer:
+        with c2pa.Builder(manifest_definition, context) as builder:
+            builder.sign_file(fixtures_dir + "A.jpg", output_dir + "A_signed.jpg", signer)
+
+    print("\nReading signed image metadata:")
+    with open(output_dir + "A_signed.jpg", "rb") as file:
+        with c2pa.Reader("image/jpeg", file, context=context) as reader:
+            print(reader.json())
+
+print("\nExample completed successfully!")
+```
+
+**Result — matched expectations exactly:**
+- **(a) Manifest content check — passed:** the printed JSON showed `claim_generator_info`, `title`, and the `c2pa.created` action assertion, all exactly as specified — confirming the custom manifest was correctly built and embedded, not just some default/empty manifest.
+- **(b) Tamper/hash check — passed:** `assertion.dataHash.match` and the related `assertion.hashedURI.match` checks came back successful, confirming the image data read back matches exactly what was hashed at signing time.
+- **(c) Signature validity — passed:** `claimSignature.validated` came back successful, confirming the signature was mathematically valid for the given manifest and certificate — i.e., the file genuinely was signed with the private key matching the embedded certificate, and the signed content hasn't changed.
+- **(d) Certificate trust — flagged as expected:** `"signingCredential.untrusted" — signing certificate untrusted`. Exactly as anticipated, since the test certificate isn't issued by a recognized Certificate Authority. This matches the exact limitation already written into the proposal's Phase 2 ("a self-signed test certificate for academic evaluation purposes... production deployment would require a certificate from a recognized Certificate Authority").
+- **Overall `"validation_state"`: `"Valid"`** — meaning the manifest's integrity and signature are cryptographically sound overall; only the certificate's real-world trust/identity is unverified, which is a separate concern from tamper detection. (Correction to note: it was initially assumed this would show as `"Invalid"` without extra trust configuration, based on a caveat in the library's example code comments — the actual behavior turned out to be more permissive than that comment suggested.)
+
+**Status: ✅ Complete.** This confirms the second pillar of the hybrid framework works correctly in isolation — mirroring how Pixel Seal's embed/detect loop was validated alone first, before anything more complex was attempted. Both halves of the hybrid pipeline are now independently proven:
+- **Pixel Seal:** embeds/detects a watermark reliably (100% bit accuracy in Section 3)
+- **C2PA:** signs/verifies a manifest reliably (valid signature, tamper-evident, correctly flags an untrusted test certificate as untrusted)
+
+---
+
+### 6.5 Clean reproduction steps
+
+If starting completely from scratch, only these steps are needed, in order — no GPU, no Pixel Seal setup required for this part:
+
+1. Open a **new, separate** Colab notebook (kept apart from the Pixel Seal notebook on purpose).
+2. Run: `!pip install c2pa-python cryptography`
+3. Run: `!git clone https://github.com/contentauth/c2pa-python /content/c2pa-python`
+4. Run the full sign/verify code from Section 6.4 above.
+5. Expect the printed manifest JSON to show `"validation_state": "Valid"` with one informational/failure note about the test certificate being untrusted — this is expected, not an error.
+
+---
+
+## 7. Next Step (In Progress)
+
+**Task:** Wire Pixel Seal and C2PA together into the actual combined hybrid pipeline — run Pixel Seal's `embed()` on an image, then pass that same watermarked image into the C2PA signing step, producing one file that carries both an invisible pixel-domain watermark and a signed metadata manifest, matching the pipeline design in the proposal.
 **Status:** Not yet started — picking up here in the next session.
 
 ---
 
-## 7. Log of Sessions
+## 8. Log of Sessions
 
 | Date | What was done |
 |---|---|
@@ -450,5 +591,6 @@ Matches the original manual-upload run closely (99.2–100% watermarked vs. ~48�
 | (session 2) | Re-tested baseline across 4 additional personal images — confirmed consistent results (98.8–100% watermarked vs. ~47–55% control). |
 | (session 3) | Ran Pixel Seal's official attack-evaluation script. Worked through 3 setup issues (working directory, CPU/GPU mismatch, missing dataset config) and 2 Colab runtime resets. Successfully produced full robustness/imperceptibility metrics across dozens of attacks — this is now the official pre-hybrid baseline for later comparison. |
 | (session 4) | Set up GitHub-based persistence (test images + dataset config pushed to repo) to avoid manual re-upload each session. Debugged 3 issues (recurring GPU/CPU reset, cell ordering, a `%cd`-caused doubled-path bug) and cleaned up a duplicate progress-log file. Verified full reproducibility: re-ran both the baseline test and the full attack-evaluation script from a clean session using only GitHub-restored files, with consistent results. |
+| (session 5) | Installed `c2pa-python` in a separate notebook and validated the C2PA sign/verify pipeline standalone, independent of Pixel Seal. Debugged a Context-object-scope bug and successfully signed and verified a test image — manifest read back as valid with correct assertions, and correctly flagged the test certificate as untrusted (expected). Both halves of the hybrid framework are now independently proven; next step is wiring them together. |
 
 *(Add a new row each session — just a couple of lines is enough to keep this useful without becoming a chore to maintain.)*
