@@ -576,14 +576,119 @@ If starting completely from scratch, only these steps are needed, in order — n
 
 ---
 
-## 7. Next Step (In Progress)
+## 7. Combined Pixel Seal + C2PA Pipeline — First Integration Test (COMPLETE)
 
-**Task:** Wire Pixel Seal and C2PA together into the actual combined hybrid pipeline — run Pixel Seal's `embed()` on an image, then pass that same watermarked image into the C2PA signing step, producing one file that carries both an invisible pixel-domain watermark and a signed metadata manifest, matching the pipeline design in the proposal.
+**Goal:** Actually wire the two independently-proven pieces (Sections 3–4 for Pixel Seal, Section 6 for C2PA) together into one real pipeline: embed a Pixel Seal watermark into an image, then sign that *same* watermarked image with a C2PA manifest, producing a single file that carries both layers — matching the pipeline design in the proposal. Then check whether both layers survive independently on that one final file, and specifically whether adding the C2PA layer disturbs the pixel watermark at all.
+
+**Where this ran:** Back in the main Pixel Seal notebook (GPU runtime, `videoseal` + `c2pa-python` both installed in the same session) — unlike Section 6, which deliberately used a separate notebook just to test C2PA in isolation.
+
+---
+
+### 7.1 First run — embed, sign, and verify in one script
+
+**What each part of this cell was trying to find out:**
+- **Step A (Pixel Seal embed):** embed a watermark into a real test image and immediately check its bit accuracy *before* anything else happens to the file — this is the reference/baseline number everything else gets compared against.
+- **Step B (C2PA sign):** take that already-watermarked file and sign it with a C2PA manifest, producing one combined output file — this is the actual "hybrid" step, not yet tested before this point.
+- **Step C (verify both layers):** on that single final file, check two independent things: does the C2PA manifest read back as valid (same checks as Section 6), and does the Pixel Seal watermark still detect correctly? The core question being asked here: **does adding a C2PA signature disturb the pixel-level watermark at all?**
+
+**Cell run (abbreviated — full code omitted here for length, saved in the notebook):**
+```python
+# Step A: embed watermark, save to file, check bit accuracy on the in-memory tensor
+outputs = model.embed(img_tensor)
+T.ToPILImage()(outputs["imgs_w"][0]).save(output_dir + "watermarked.jpg")
+# ... detect() on outputs["imgs_w"] directly → 100.0%
+
+# Step B: sign the saved file with a C2PA manifest → watermarked_signed.jpg
+
+# Step C: read back the C2PA manifest (validate), and detect() on the final signed file
+```
+
+**Result:**
+- Pixel Seal bit accuracy **before** C2PA signing (measured directly on the in-memory tensor): **100.0%**
+- C2PA layer: manifest read back correctly, all hash and signature checks passed, certificate correctly flagged as untrusted (test cert, expected) — same clean result pattern as Section 6.
+- Pixel Seal bit accuracy **after** C2PA signing (measured by loading the final signed file back from disk): **89.5%**
+
+**Initial (incorrect) interpretation:** at first glance, this looked like C2PA's signing step was degrading the pixel watermark — a real and important-sounding finding, since it would mean the two layers aren't fully "free" to combine. This is exactly the kind of number that would be tempting to write straight into a report without double-checking it further.
+
+---
+
+### 7.2 Catching a flawed comparison — pixel-level diagnostic
+
+**What this step was trying to find out:** before accepting the 100% → 89.5% drop as a real effect of C2PA, verify directly at the pixel level whether C2PA's signing process actually changed any image data at all, or only added metadata around it.
+
+**Cell run:**
+```python
+import numpy as np
+arr_before = np.array(Image.open(path_before).convert("RGB")).astype(np.int16)
+arr_after = np.array(Image.open(path_after).convert("RGB")).astype(np.int16)
+diff = np.abs(arr_before - arr_after)
+print(f"Mean absolute pixel difference: {diff.mean():.4f}")
+print(f"% of pixels that changed at all: {(diff.sum(axis=2) > 0).mean() * 100:.2f}%")
+```
+
+**Result:**
+```
+File size BEFORE: 13,708 bytes → AFTER: 118,891 bytes (+105,183 bytes)
+Mean absolute pixel difference: 0.0000
+Max pixel difference: 0
+% of pixels that changed at all: 0.00%
+```
+
+**What this meant:** the two files are **byte-for-byte pixel-identical** — zero difference, not even a small one. The large file-size increase is entirely the C2PA manifest, certificate, and thumbnail data being added as metadata, not any change to the actual image content. This directly disproved the initial interpretation from 7.1 — C2PA's signing step is provably pixel-lossless.
+
+---
+
+### 7.3 Finding the real cause — an unfair comparison, not a real effect
+
+**What this step was trying to find out:** if C2PA didn't change any pixels, where did the 100% → 89.5% drop actually come from? The likely culprit: the "before" measurement in 7.1 was taken directly on the **in-memory tensor** (`outputs["imgs_w"]`), which never touched a file at all — while the "after" measurement was taken on an image **loaded back from a saved JPEG file**. Any JPEG save/reload introduces some ordinary compression loss, regardless of C2PA. This step re-measured both files (pre-C2PA and post-C2PA) using the *exact same* file-loading method, to isolate C2PA's effect specifically.
+
+**Cell run:**
+```python
+detected_before_file = model.detect(T.ToTensor()(Image.open("watermarked.jpg").convert("RGB")).unsqueeze(0))
+# ... compute bit accuracy → 
+detected_after_file = model.detect(T.ToTensor()(Image.open("watermarked_signed.jpg").convert("RGB")).unsqueeze(0))
+# ... compute bit accuracy →
+```
+
+**Result:**
+```
+Bit accuracy from watermarked.jpg (pre-C2PA, loaded from file):        88.3%
+Bit accuracy from watermarked_signed.jpg (post-C2PA, loaded from file): 88.3%
+```
+
+**What this meant — the corrected, final conclusion:** both numbers are **identical**. This is the clean, properly-isolated proof: **C2PA signing adds zero additional degradation to the Pixel Seal watermark, beyond whatever the original JPEG save already caused.** The earlier apparent "drop to 89.5%" in Section 7.1 was never caused by C2PA at all — it was an artifact of comparing an in-memory tensor (100%) against a JPEG-reloaded file (~88%), which is not a fair comparison regardless of C2PA's involvement.
+
+---
+
+### 7.4 Final, corrected conclusion
+
+- **Real cause of the original small accuracy drop:** ordinary JPEG save/reload compression loss — present whether or not C2PA is involved at all.
+- **C2PA's actual contribution to pixel-level fidelity: none.** Provably pixel-identical (confirmed via direct pixel-array diffing, not just visual inspection).
+- **This is a positive result for the hybrid design, not a limitation:** it means layering C2PA onto Pixel Seal is effectively "free" from the pixel-watermark's perspective — the cryptographic provenance layer is gained with zero additional cost to the pixel watermark's reliability. The two layers coexist without interfering with each other, which directly supports the core thesis of the hybrid framework.
+- **Methodological lesson worth keeping in mind for future evaluation steps:** always compare like-for-like when measuring an effect — an in-memory tensor and a file-reloaded image are not directly comparable, even before any additional processing (like C2PA) is introduced. This exact mistake was caught here only because a pixel-level diagnostic was run before accepting the first result at face value; worth applying that same discipline to any future comparison in this project.
+
+**Status: ✅ Complete.** The full Pixel Seal → C2PA pipeline works end-to-end, produces one combined file carrying both layers, and both layers have now been shown to survive independently with no interference between them — a meaningful, positive result for the hybrid framework's core design.
+
+---
+
+### 7.5 Clean reproduction steps
+
+1. In the Pixel Seal notebook (GPU runtime, `videoseal` + model loaded + restore cell run), add: `!pip install c2pa-python cryptography` and `!git clone https://github.com/contentauth/c2pa-python /content/c2pa-python`.
+2. Run the combined embed → sign → verify script (Section 7.1's full version, saved in the notebook).
+3. Run the pixel-level diagnostic (Section 7.2) to confirm C2PA signing didn't alter any pixel values.
+4. Run the isolated same-file-loading-method comparison (Section 7.3) to get the true, fair before/after bit-accuracy comparison.
+5. Expect: pixel diff = 0 across the board, and the two file-loaded bit accuracies to match each other exactly (any ordinary JPEG-related loss will show up equally in both, not as a difference between them).
+
+---
+
+## 8. Next Step (In Progress)
+
+**Task:** Expand the combined pipeline test to more images (currently only tested on one), and begin running the same attack suite from Section 4 against the final hybrid (Pixel Seal + C2PA) output files — measuring how the C2PA layer specifically behaves under each attack (does the manifest survive cropping/resizing/compression, or only the pixel watermark?), to get the actual "hybrid vs. Pixel-Seal-alone" comparison the proposal calls for.
 **Status:** Not yet started — picking up here in the next session.
 
 ---
 
-## 8. Log of Sessions
+## 9. Log of Sessions
 
 | Date | What was done |
 |---|---|
@@ -592,5 +697,6 @@ If starting completely from scratch, only these steps are needed, in order — n
 | (session 3) | Ran Pixel Seal's official attack-evaluation script. Worked through 3 setup issues (working directory, CPU/GPU mismatch, missing dataset config) and 2 Colab runtime resets. Successfully produced full robustness/imperceptibility metrics across dozens of attacks — this is now the official pre-hybrid baseline for later comparison. |
 | (session 4) | Set up GitHub-based persistence (test images + dataset config pushed to repo) to avoid manual re-upload each session. Debugged 3 issues (recurring GPU/CPU reset, cell ordering, a `%cd`-caused doubled-path bug) and cleaned up a duplicate progress-log file. Verified full reproducibility: re-ran both the baseline test and the full attack-evaluation script from a clean session using only GitHub-restored files, with consistent results. |
 | (session 5) | Installed `c2pa-python` in a separate notebook and validated the C2PA sign/verify pipeline standalone, independent of Pixel Seal. Debugged a Context-object-scope bug and successfully signed and verified a test image — manifest read back as valid with correct assertions, and correctly flagged the test certificate as untrusted (expected). Both halves of the hybrid framework are now independently proven; next step is wiring them together. |
+| (session 6) | Ran the first combined Pixel Seal + C2PA pipeline test — embed, sign, and verify both layers on one file. Initial result appeared to show C2PA degrading the pixel watermark (100% → 89.5%), but a pixel-level diagnostic proved the two files were byte-for-byte identical, and a corrected same-file-loading comparison showed the true effect of C2PA signing on the pixel watermark is zero. Confirmed the two layers coexist without interference — a positive result for the hybrid design. |
 
 *(Add a new row each session — just a couple of lines is enough to keep this useful without becoming a chore to maintain.)*
