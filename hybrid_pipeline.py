@@ -176,7 +176,10 @@ def verify_pixelseal(model, image_path, embedded_msg):
 
     detected = model.detect(tensor)
     bits = (detected["preds"][0, 1:] > 0).float()
-
+    
+    # Put the reference message on the same device as the detected bits
+    embedded_msg = embedded_msg.to(bits.device)
+    
     acc = (bits == embedded_msg).float().mean().item() * 100
     return acc
 
