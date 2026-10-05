@@ -681,14 +681,36 @@ Bit accuracy from watermarked_signed.jpg (post-C2PA, loaded from file): 88.3%
 
 ---
 
-## 8. Next Step (In Progress)
+## 8. Code Refactor — hybrid_pipeline.py Module Added to Repo
 
-**Task:** Expand the combined pipeline test to more images (currently only tested on one), and begin running the same attack suite from Section 4 against the final hybrid (Pixel Seal + C2PA) output files — measuring how the C2PA layer specifically behaves under each attack (does the manifest survive cropping/resizing/compression, or only the pixel watermark?), to get the actual "hybrid vs. Pixel-Seal-alone" comparison the proposal calls for.
+**What was done:** Added `hybrid_pipeline.py` to the root of the GitHub repo. This consolidates the embed/sign/verify/attack code that was previously re-pasted into notebook cells each session into a single reusable Python module.
+
+**How to import and use it in a notebook, going forward:**
+```python
+import sys
+sys.path.append('/content/Pixel-Seal-Hybrid-Watermarking-Framework-')
+import hybrid_pipeline as hp
+
+certs, key = hp.load_c2pa_fixtures("/content/c2pa-python/tests/fixtures/")
+result = hp.embed_and_sign(model, "/content/my_test_images/download.jpg",
+                            "/content/hybrid_output/", certs, key)
+acc = hp.verify_pixelseal(model, result["signed_path"], result["embedded_msg"])
+c2pa_info = hp.verify_c2pa(result["signed_path"])
+```
+No extra clone step needed — the module lives in the same repo the restore cell already clones each session.
+
+**Status:** Uploaded, not yet tested live in Colab (session was blocked by a Colab capacity issue — "no backends available" — at the time this was added). Needs a first live import/run to confirm it works as expected before relying on it further.
+
+---
+
+## 9. Next Step (In Progress)
+
+**Task:** Confirm `hybrid_pipeline.py` imports and runs correctly in Colab, then continue with the remaining recommended-changes list (config file, version pinning, expanding to more images, etc.) and the attack-suite-on-hybrid-output work from before.
 **Status:** Not yet started — picking up here in the next session.
 
 ---
 
-## 9. Log of Sessions
+## 10. Log of Sessions
 
 | Date | What was done |
 |---|---|
@@ -698,5 +720,6 @@ Bit accuracy from watermarked_signed.jpg (post-C2PA, loaded from file): 88.3%
 | (session 4) | Set up GitHub-based persistence (test images + dataset config pushed to repo) to avoid manual re-upload each session. Debugged 3 issues (recurring GPU/CPU reset, cell ordering, a `%cd`-caused doubled-path bug) and cleaned up a duplicate progress-log file. Verified full reproducibility: re-ran both the baseline test and the full attack-evaluation script from a clean session using only GitHub-restored files, with consistent results. |
 | (session 5) | Installed `c2pa-python` in a separate notebook and validated the C2PA sign/verify pipeline standalone, independent of Pixel Seal. Debugged a Context-object-scope bug and successfully signed and verified a test image — manifest read back as valid with correct assertions, and correctly flagged the test certificate as untrusted (expected). Both halves of the hybrid framework are now independently proven; next step is wiring them together. |
 | (session 6) | Ran the first combined Pixel Seal + C2PA pipeline test — embed, sign, and verify both layers on one file. Initial result appeared to show C2PA degrading the pixel watermark (100% → 89.5%), but a pixel-level diagnostic proved the two files were byte-for-byte identical, and a corrected same-file-loading comparison showed the true effect of C2PA signing on the pixel watermark is zero. Confirmed the two layers coexist without interference — a positive result for the hybrid design. |
+| (session 7) | Reviewed a list of 14 recommended methodology improvements; confirmed all are doable and agreed on an order. Attempted to start with version-pinning but Colab was unavailable (GPU and then CPU backends both failed to connect). Used the time instead to refactor the notebook's embed/sign/verify/attack code into a reusable `hybrid_pipeline.py` module, uploaded to the repo — not yet tested live. |
 
 *(Add a new row each session — just a couple of lines is enough to keep this useful without becoming a chore to maintain.)*
