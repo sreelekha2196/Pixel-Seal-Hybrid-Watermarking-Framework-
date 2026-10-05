@@ -20,6 +20,7 @@ Usage in a notebook cell:
 import io
 import os
 import c2pa
+import json
 from PIL import Image
 import torchvision.transforms as T
 from cryptography.hazmat.primitives import hashes, serialization
@@ -203,10 +204,17 @@ def verify_c2pa(image_path):
     try:
         with c2pa.Context() as ctx:
             with open(image_path, "rb") as f:
-                with c2pa.Reader("image/jpeg", f, context=ctx) as reader:
-                    manifest = reader.json()
-                    result["raw_json"] = manifest
-                    result["manifest_present"] = bool(manifest.get("active_manifest"))
+                    with c2pa.Reader("image/jpeg", f, context=ctx) as reader:
+                        manifest = reader.json()
+                    
+                        # c2pa-python returns JSON text, so convert it to a dictionary
+                        if isinstance(manifest, str):
+                            manifest = json.loads(manifest)
+                    
+                        result["raw_json"] = manifest
+                        result["manifest_present"] = bool(
+                            manifest.get("active_manifest")
+                        )
                     if result["manifest_present"]:
                         result["manifest_valid"] = (manifest.get("validation_state") == "Valid")
                         # Look for a certificate-trust-specific flag in validation_status
