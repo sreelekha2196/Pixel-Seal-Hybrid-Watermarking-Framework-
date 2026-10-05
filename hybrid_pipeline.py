@@ -108,12 +108,28 @@ def embed_and_sign(model, image_path, output_dir, certs, key, title=None,
 
     # Step A: Pixel Seal embed
     pil_img = Image.open(image_path).convert("RGB")
-    img_tensor = T.ToTensor()(pil_img).unsqueeze(0)
+    
+    # Put the input tensor on the same device as the Pixel Seal model
+    device = next(model.parameters()).device
+    
+    img_tensor = (
+        T.ToTensor()(pil_img)
+        .unsqueeze(0)
+        .to(device)
+    )
+    
     outputs = model.embed(img_tensor)
     embedded_msg = outputs["msgs"][0]
-
+    
     watermarked_path = os.path.join(output_dir, f"wm_{base_name}")
-    T.ToPILImage()(outputs["imgs_w"][0]).save(watermarked_path, quality=jpeg_quality)
+    
+    # PIL conversion must happen on the CPU
+    T.ToPILImage()(
+        outputs["imgs_w"][0].detach().cpu()
+    ).save(
+        watermarked_path,
+        quality=jpeg_quality
+    )
 
     # Step B: C2PA sign
     manifest = make_manifest(
@@ -147,9 +163,19 @@ def embed_and_sign(model, image_path, output_dir, certs, key, title=None,
 
 def verify_pixelseal(model, image_path, embedded_msg):
     """Returns bit accuracy (0-100) of the Pixel Seal watermark in image_path."""
-    tensor = T.ToTensor()(Image.open(image_path).convert("RGB")).unsqueeze(0)
+
+    # Put the input tensor on the same device as the Pixel Seal model
+    device = next(model.parameters()).device
+
+    tensor = (
+        T.ToTensor()(Image.open(image_path).convert("RGB"))
+        .unsqueeze(0)
+        .to(device)
+    )
+
     detected = model.detect(tensor)
     bits = (detected["preds"][0, 1:] > 0).float()
+
     acc = (bits == embedded_msg).float().mean().item() * 100
     return acc
 
