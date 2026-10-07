@@ -886,9 +886,50 @@ These tests do not mean that the original C2PA manifest survives an ordinary res
 
 ---
 
+### 9.11 Evidence matrix and tamper-detection test
+
+**Purpose:** Consolidate the tested hybrid scenarios and verify that C2PA detects pixel modification when the original manifest is retained without re-signing.
+
+| Scenario | Pixel Seal accuracy | Manifest present | Manifest valid | Certificate trusted |
+|---|---:|---|---|---|
+| Untouched hybrid | 99.61% | True | True | False |
+| Brightness edit, re-signed | 87.11% | True | True | False |
+| Resize 50%, re-signed | 49.61% | True | True | False |
+| Brightness tampered, original manifest retained | 87.11% | True | False | False |
+
+For the tamper test, the image pixels were modified after signing, while the original C2PA APP11 manifest segments were retained and the file was not re-signed. The result was:
+
+```text
+Pixel Seal accuracy: 87.109375%
+C2PA manifest present: True
+C2PA manifest valid: False
+```
+
+This confirms that C2PA can detect that the current image no longer matches the asset that was originally signed. It also demonstrates a third evidence state: Pixel Seal may still be partially detectable while C2PA reports tampering.
+
+The combined observations are:
+
+- unchanged hybrid file: both layers validate;
+- C2PA-aware edit: C2PA remains valid after re-signing, even when Pixel Seal weakens;
+- post-signing pixel tampering: C2PA remains present but becomes invalid;
+- ordinary re-encoding with metadata stripping: C2PA disappears and Pixel Seal is the only possible remaining layer.
+
+### 9.12 Interpretation of the evidence states
+
+The evidence matrix supports the central hybrid-framework argument, but the two layers provide different types of protection rather than improving the same metric:
+
+- **Untouched hybrid:** Pixel Seal successfully recovers the embedded message, and C2PA confirms the signed asset.
+- **Edited and re-signed:** C2PA remains valid because the new edited asset is explicitly signed again. Pixel Seal accuracy may decrease because the pixel content has changed.
+- **Edited without re-signing:** The original C2PA manifest remains physically present, but validation fails because the current pixels no longer match the signed asset. This is a tamper signal, not a successful provenance verification.
+- **Ordinary re-encoding or metadata stripping:** C2PA may disappear completely, leaving Pixel Seal as the remaining source of evidence if its message can still be recovered.
+
+Therefore, the current results support the following claim: **C2PA complements Pixel Seal by validating provenance or detecting post-signing modification; it does not restore Pixel Seal detection accuracy after severe pixel attacks.** The untrusted-certificate result is expected because the tests use an academic/self-signed certificate rather than a certificate chain trusted by the verifier.
+
+---
+
 ## 10. Next Steps (In Progress)
 
-Test tamper detection by signing an image, modifying its pixels afterward, and retaining the original manifest without re-signing. The expected outcome is that Pixel Seal may degrade and C2PA should detect an invalid asset-to-manifest binding.
+Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
 
 Continue the matched Pixel Seal-only versus Pixel Seal + C2PA evaluation using the same images and attack parameters.
 
@@ -902,16 +943,17 @@ The Kaggle smoke test validates pipeline correctness; it does not yet establish 
 
 ## 11. Log of Sessions
 
-| Date | What was done |
-|---|---|
-| (session 1) | Set up Colab, resolved setup/debugging issues, and achieved the working Pixel Seal baseline. |
-| (session 2) | Re-tested the baseline across four additional personal images and confirmed consistent watermarked and control accuracy. |
-| (session 3) | Ran Pixel Seal's official attack-evaluation script and produced robustness and imperceptibility metrics across dozens of attacks. |
-| (session 4) | Set up GitHub persistence for test images and dataset configuration, debugged Colab reset and path issues, and verified reproducibility. |
-| (session 5) | Validated standalone C2PA signing and verification using a test certificate, correctly reporting the certificate as untrusted. |
-| (session 6) | Ran the first combined Pixel Seal + C2PA test and proved through pixel-level diagnostics that C2PA signing did not add Pixel Seal degradation. |
-| (session 7) | Refactored notebook logic into the reusable `hybrid_pipeline.py` module and uploaded it to GitHub. |
-| 2026-10-05 | Migrated the module to Kaggle, fixed VideoSeal's relative configuration path, loaded Pixel Seal on CUDA, corrected CUDA/CPU tensor mismatches, restored test images, fixed C2PA JSON parsing, and completed a one-image hybrid smoke test with 99.21875% Pixel Seal accuracy and a valid C2PA manifest. |
-| 2026-10-07 | Ran matched Pixel Seal-only versus Pixel Seal + C2PA attacks across four images for JPEG compression, resize, crop, blur, noise, rotation, brightness, contrast, and saturation. Results were identical at the pixel level, while ordinary re-saving removed C2PA. Then tested C2PA-aware re-signing after brightness and 50% resize edits; C2PA remained valid while Pixel Seal dropped to 87.11% and 49.61%, respectively. |
+| Session | Date | What was done |
+|---|---|---|
+| Session 1 | — | Set up Colab, resolved setup/debugging issues, and achieved the working Pixel Seal baseline. |
+| Session 2 | — | Re-tested the baseline across four additional personal images and confirmed consistent watermarked and control accuracy. |
+| Session 3 | — | Ran Pixel Seal's official attack-evaluation script and produced robustness and imperceptibility metrics across dozens of attacks. |
+| Session 4 | — | Set up GitHub persistence for test images and dataset configuration, debugged Colab reset and path issues, and verified reproducibility. |
+| Session 5 | — | Validated standalone C2PA signing and verification using a test certificate, correctly reporting the certificate as untrusted. |
+| Session 6 | — | Ran the first combined Pixel Seal + C2PA test and proved through pixel-level diagnostics that C2PA signing did not add Pixel Seal degradation. |
+| Session 7 | — | Refactored notebook logic into the reusable `hybrid_pipeline.py` module and uploaded it to GitHub. |
+| Session 8 | 2026-10-05 | Migrated the module to Kaggle, fixed VideoSeal's relative configuration path, loaded Pixel Seal on CUDA, corrected CUDA/CPU tensor mismatches, restored test images, fixed C2PA JSON parsing, and completed a one-image hybrid smoke test with 99.21875% Pixel Seal accuracy and a valid C2PA manifest. |
+| Session 9 | 2026-10-07 | Ran matched Pixel Seal-only versus Pixel Seal + C2PA attacks across four images for JPEG compression, resize, crop, blur, noise, rotation, brightness, contrast, and saturation. Results were identical at the pixel level. Tested C2PA-aware re-signing and post-signing tampering; C2PA remained valid after re-signing and became invalid when pixels were modified without re-signing. |
+| Session 10 | 2026-10-07 | Documented and interpreted the final hybrid evidence matrix: untouched, edited-and-re-signed, resized-and-re-signed, and tampered-without-re-signing scenarios. Confirmed that C2PA complements Pixel Seal through provenance validation and tamper detection, while not restoring Pixel Seal accuracy after severe pixel attacks. |
 
 *(Add a new row here at the end of every future session.)*
