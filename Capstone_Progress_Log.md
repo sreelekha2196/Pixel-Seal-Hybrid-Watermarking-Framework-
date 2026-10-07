@@ -813,9 +813,84 @@ This completes the first live Kaggle validation of the reusable Pixel Seal + C2P
 
 ---
 
+### 9.9 Controlled attack evaluation: ordinary re-encoding and metadata stripping
+
+**Purpose:** Compare Pixel Seal-only and Pixel Seal + C2PA using the same images and the same attack parameters. The first attack implementation transforms the image and saves a new JPEG with Pillow. This intentionally represents ordinary editing or re-encoding in which the original C2PA manifest is not preserved.
+
+The evaluation used four test images and the following attacks:
+
+- JPEG quality 40 and 70;
+- resize to 50%;
+- center crop retaining 50% of width and height;
+- Gaussian blur with radius 3;
+- Gaussian noise with sigma 10;
+- rotation by 10 degrees;
+- brightness increase by a factor of 1.5;
+- contrast increase by a factor of 1.5;
+- saturation increase by a factor of 1.5;
+- brightness decrease by a factor of 0.5;
+- contrast decrease by a factor of 0.5;
+- saturation decrease by a factor of 0.5.
+
+Pixel Seal-only and Pixel Seal + C2PA produced identical Pixel Seal accuracies for every tested image and attack. This confirms that adding C2PA did not alter the pixel-level watermark or its robustness under these transformations.
+
+Average Pixel Seal accuracy across the four images was:
+
+| Attack | Average Pixel Seal accuracy | C2PA after ordinary re-save |
+|---|---:|---|
+| JPEG quality 40 | 70.70% | Manifest removed |
+| JPEG quality 70 | 85.16% | Manifest removed |
+| Resize 50% | 50.39% | Manifest removed |
+| Crop 50% | 68.65% | Manifest removed |
+| Gaussian blur, radius 3 | 51.66% | Manifest removed |
+| Gaussian noise, sigma 10 | 79.39% | Manifest removed |
+| Rotation, 10° | 93.65% | Manifest removed |
+| Brightness ×1.5 | 91.41% | Manifest removed |
+| Contrast ×1.5 | 95.51% | Manifest removed |
+| Saturation ×1.5 | 98.14% | Manifest removed |
+| Brightness ×0.5 | 96.58% | Manifest removed |
+| Contrast ×0.5 | 96.88% | Manifest removed |
+| Saturation ×0.5 | 98.14% | Manifest removed |
+
+The strongest Pixel Seal weaknesses in this initial multi-image evaluation were 50% resizing and Gaussian blur, both of which averaged close to the 50% chance level. JPEG compression and cropping caused moderate degradation, while rotation, contrast, and saturation changes were generally more tolerable.
+
+For every ordinary re-encoding attack, the C2PA result was:
+
+```text
+c2pa_manifest_present: False
+c2pa_manifest_valid: None
+```
+
+This is expected for this attack implementation because the transformed image was saved as a new JPEG without carrying forward the C2PA manifest. These results therefore measure the metadata-stripping scenario, not every possible C2PA behavior.
+
+### 9.10 C2PA-aware re-signing tests
+
+**Purpose:** Test whether C2PA can remain available when an editing workflow creates a new manifest and signs the edited output.
+
+Two edits were applied to the signed hybrid image, and each edited output was signed again with C2PA using a new manifest that referenced the Pixel Seal message.
+
+| C2PA-aware edit | Pixel Seal accuracy after edit | Manifest present | Manifest valid | Certificate trusted |
+|---|---:|---|---|---|
+| Brightness ×1.5, then re-signed | 87.11% | True | True | False |
+| Resize 50%, then re-signed | 49.61% | True | True | False |
+
+The resize result is especially important: Pixel Seal dropped to approximately chance-level accuracy, while C2PA remained valid after the edit was properly re-signed. This demonstrates the complementary behavior proposed by the project:
+
+```text
+Pixel Seal weakened + C2PA-aware re-signing = C2PA provenance evidence remains available
+```
+
+The certificate was reported as untrusted because the experiment uses the C2PA library's academic test certificate. The manifest and signature themselves were valid.
+
+These tests do not mean that the original C2PA manifest survives an ordinary resize. They demonstrate that C2PA can survive an edit when the editing workflow creates and signs an updated manifest.
+
+---
+
 ## 10. Next Steps (In Progress)
 
-Run identical attacks on Pixel Seal-only and Pixel Seal + C2PA outputs using the same images and attack parameters.
+Test tamper detection by signing an image, modifying its pixels afterward, and retaining the original manifest without re-signing. The expected outcome is that Pixel Seal may degrade and C2PA should detect an invalid asset-to-manifest binding.
+
+Continue the matched Pixel Seal-only versus Pixel Seal + C2PA evaluation using the same images and attack parameters.
 
 Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certificate status, Pixel Seal/C2PA message linkage, and the final evidence category.
 
@@ -837,5 +912,6 @@ The Kaggle smoke test validates pipeline correctness; it does not yet establish 
 | (session 6) | Ran the first combined Pixel Seal + C2PA test and proved through pixel-level diagnostics that C2PA signing did not add Pixel Seal degradation. |
 | (session 7) | Refactored notebook logic into the reusable `hybrid_pipeline.py` module and uploaded it to GitHub. |
 | 2026-10-05 | Migrated the module to Kaggle, fixed VideoSeal's relative configuration path, loaded Pixel Seal on CUDA, corrected CUDA/CPU tensor mismatches, restored test images, fixed C2PA JSON parsing, and completed a one-image hybrid smoke test with 99.21875% Pixel Seal accuracy and a valid C2PA manifest. |
+| 2026-10-07 | Ran matched Pixel Seal-only versus Pixel Seal + C2PA attacks across four images for JPEG compression, resize, crop, blur, noise, rotation, brightness, contrast, and saturation. Results were identical at the pixel level, while ordinary re-saving removed C2PA. Then tested C2PA-aware re-signing after brightness and 50% resize edits; C2PA remained valid while Pixel Seal dropped to 87.11% and 49.61%, respectively. |
 
 *(Add a new row here at the end of every future session.)*
