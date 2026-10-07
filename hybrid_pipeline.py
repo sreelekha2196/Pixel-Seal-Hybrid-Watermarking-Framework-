@@ -26,7 +26,7 @@ import torchvision.transforms as T
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 import numpy as np
 
 
@@ -278,7 +278,16 @@ def apply_rotation(img, degrees):
         resample=Image.Resampling.BICUBIC,
         expand=False
     )
+def apply_brightness(img, factor):
+    return ImageEnhance.Brightness(img).enhance(factor)
 
+
+def apply_contrast(img, factor):
+    return ImageEnhance.Contrast(img).enhance(factor)
+
+
+def apply_saturation(img, factor):
+    return ImageEnhance.Color(img).enhance(factor)
 
 DEFAULT_ATTACKS = {
     "JPEG_40": lambda img: apply_jpeg(img, 40),
