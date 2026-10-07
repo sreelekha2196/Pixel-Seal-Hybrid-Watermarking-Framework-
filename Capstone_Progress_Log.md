@@ -703,23 +703,139 @@ No extra clone step needed — the module lives in the same repo the restore cel
 
 ---
 
-## 9. Next Step (In Progress)
+## 9. Kaggle Migration and Live Hybrid-Pipeline Validation — COMPLETE
 
-**Task:** Confirm `hybrid_pipeline.py` imports and runs correctly in Colab, then continue with the remaining recommended-changes list (config file, version pinning, expanding to more images, etc.) and the attack-suite-on-hybrid-output work from before.
-**Status:** Not yet started — picking up here in the next session.
+This section continues the work in Section 8. The reusable `hybrid_pipeline.py` module was tested live in Kaggle and the complete one-image Pixel Seal + C2PA smoke test succeeded.
+
+### 9.1 Kaggle setup and module import
+
+The repositories were made available under `/kaggle/working/videoseal/` and `/kaggle/working/Pixel-Seal-Hybrid-Watermarking-Framework-/`. The project module was imported by inserting the project directory into `sys.path` and running `import hybrid_pipeline as hp`.
+
+### 9.2 VideoSeal configuration-path issue
+
+The first Kaggle model-loading attempt downloaded the Pixel Seal checkpoint but failed to find `attenuation.yaml`. The checkpoint was not the problem. `sys.path` controls Python imports but does not change the working directory, while VideoSeal resolves `configs/attenuation.yaml` relative to the current directory.
+
+The issue was fixed by changing into the VideoSeal repository before loading the model:
+
+```python
+os.chdir("/kaggle/working/videoseal")
+sys.path.insert(0, "/kaggle/working/videoseal")
+sys.path.insert(0, "/kaggle/working/Pixel-Seal-Hybrid-Watermarking-Framework-")
+```
+
+The model then loaded successfully with all checkpoint keys matched.
+
+### 9.3 CUDA setup and rationale
+
+Kaggle detected a CUDA GPU, so the Pixel Seal model was moved to CUDA. CUDA was used because the hybrid evaluation repeatedly performs Pixel Seal embedding and detection across multiple images and attack conditions. GPU execution reduces repeated neural-network inference time.
+
+Successful setup output included:
+
+```text
+Current directory: /kaggle/working/videoseal
+Config exists: True
+Model loaded successfully ... <All keys matched successfully>
+Model loaded on: cuda
+```
+
+The `ffmpeg-python` warning was not relevant to the current image-only experiment; it affects optional video functionality.
+
+### 9.4 CUDA/CPU tensor corrections
+
+The initial module created CPU tensors while the model was on CUDA. The module was updated so `embed_and_sign()` obtains the model device and moves the input image tensor to that device. The generated watermark tensor is moved back to CPU before conversion to a PIL image:
+
+```python
+device = next(model.parameters()).device
+img_tensor = T.ToTensor()(pil_img).unsqueeze(0).to(device)
+```
+
+```python
+T.ToPILImage()(outputs["imgs_w"][0].detach().cpu()).save(
+    watermarked_path,
+    quality=jpeg_quality
+)
+```
+
+The same device handling was added to `verify_pixelseal()`. A later comparison error showed that the detected bits were on CUDA while the stored reference message was on CPU. This was corrected with:
+
+```python
+embedded_msg = embedded_msg.to(bits.device)
+```
+
+### 9.5 Restoring test images
+
+The expected image directory did not initially exist in Kaggle. The repository's `test_images.zip` was extracted to `/kaggle/working/my_test_images/`. The restored files were `download.jpg`, `download (1).jpg`, `download (2).jpg`, and `download (3).jpg`.
+
+### 9.6 One-image hybrid smoke test
+
+After preparing `c2pa-python` and its test certificate/key fixtures, one image was passed through:
+
+```text
+original image → Pixel Seal embedding → watermarked JPEG → C2PA signing → final hybrid JPEG
+```
+
+The pipeline was run with `link_message_to_manifest=True`, so the Pixel Seal message was included in the C2PA manifest as a custom assertion. The smoke test created:
+
+```text
+/kaggle/working/hybrid_smoke_test/wm_download.jpg
+/kaggle/working/hybrid_smoke_test/signed_download.jpg
+```
+
+### 9.7 C2PA JSON parsing correction
+
+The first C2PA verification attempt failed because `c2pa.Reader.json()` returned JSON text while `verify_c2pa()` expected a dictionary. The function was updated to parse the text when necessary:
+
+```python
+manifest = reader.json()
+if isinstance(manifest, str):
+    manifest = json.loads(manifest)
+```
+
+The updated GitHub version was pulled into Kaggle with `git pull`, and the module was reloaded with `importlib.reload(hp)`.
+
+### 9.8 Final smoke-test result
+
+The final verification output was:
+
+```text
+Pixel Seal accuracy: 99.21875
+
+C2PA verification:
+Manifest present: True
+Manifest valid: True
+Certificate trusted: False
+Error: None
+```
+
+Pixel Seal recovered approximately 99.22% of the embedded bits after saving, signing, and reading back the image. The C2PA manifest and signature were valid. The test certificate was untrusted as expected because it is an academic/test certificate rather than a recognized Certificate Authority certificate. Certificate trust is separate from signature validity.
+
+This completes the first live Kaggle validation of the reusable Pixel Seal + C2PA pipeline.
 
 ---
 
-## 10. Log of Sessions
+## 10. Next Steps (In Progress)
+
+Run identical attacks on Pixel Seal-only and Pixel Seal + C2PA outputs using the same images and attack parameters.
+
+Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certificate status, Pixel Seal/C2PA message linkage, and the final evidence category.
+
+The initial attack suite includes JPEG compression, resizing, and cropping. It should be expanded to the proposal's complete scope: blur, noise, rotation, brightness/contrast or color changes, metadata stripping, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
+
+The Kaggle smoke test validates pipeline correctness; it does not yet establish improved attack robustness. That conclusion requires matched Pixel Seal-only versus hybrid attack experiments.
+
+---
+
+## 11. Log of Sessions
 
 | Date | What was done |
 |---|---|
-| (session 1) | Set up Colab, resolved 4 setup/debugging issues, achieved working Pixel Seal baseline (100% watermarked accuracy on sample image). |
-| (session 2) | Re-tested baseline across 4 additional personal images — confirmed consistent results (98.8–100% watermarked vs. ~47–55% control). |
-| (session 3) | Ran Pixel Seal's official attack-evaluation script. Worked through 3 setup issues (working directory, CPU/GPU mismatch, missing dataset config) and 2 Colab runtime resets. Successfully produced full robustness/imperceptibility metrics across dozens of attacks — this is now the official pre-hybrid baseline for later comparison. |
-| (session 4) | Set up GitHub-based persistence (test images + dataset config pushed to repo) to avoid manual re-upload each session. Debugged 3 issues (recurring GPU/CPU reset, cell ordering, a `%cd`-caused doubled-path bug) and cleaned up a duplicate progress-log file. Verified full reproducibility: re-ran both the baseline test and the full attack-evaluation script from a clean session using only GitHub-restored files, with consistent results. |
-| (session 5) | Installed `c2pa-python` in a separate notebook and validated the C2PA sign/verify pipeline standalone, independent of Pixel Seal. Debugged a Context-object-scope bug and successfully signed and verified a test image — manifest read back as valid with correct assertions, and correctly flagged the test certificate as untrusted (expected). Both halves of the hybrid framework are now independently proven; next step is wiring them together. |
-| (session 6) | Ran the first combined Pixel Seal + C2PA pipeline test — embed, sign, and verify both layers on one file. Initial result appeared to show C2PA degrading the pixel watermark (100% → 89.5%), but a pixel-level diagnostic proved the two files were byte-for-byte identical, and a corrected same-file-loading comparison showed the true effect of C2PA signing on the pixel watermark is zero. Confirmed the two layers coexist without interference — a positive result for the hybrid design. |
-| (session 7) | Reviewed a list of 14 recommended methodology improvements; confirmed all are doable and agreed on an order. Attempted to start with version-pinning but Colab was unavailable (GPU and then CPU backends both failed to connect). Used the time instead to refactor the notebook's embed/sign/verify/attack code into a reusable `hybrid_pipeline.py` module, uploaded to the repo — not yet tested live. |
+| (session 1) | Set up Colab, resolved setup/debugging issues, and achieved the working Pixel Seal baseline. |
+| (session 2) | Re-tested the baseline across four additional personal images and confirmed consistent watermarked and control accuracy. |
+| (session 3) | Ran Pixel Seal's official attack-evaluation script and produced robustness and imperceptibility metrics across dozens of attacks. |
+| (session 4) | Set up GitHub persistence for test images and dataset configuration, debugged Colab reset and path issues, and verified reproducibility. |
+| (session 5) | Validated standalone C2PA signing and verification using a test certificate, correctly reporting the certificate as untrusted. |
+| (session 6) | Ran the first combined Pixel Seal + C2PA test and proved through pixel-level diagnostics that C2PA signing did not add Pixel Seal degradation. |
+| (session 7) | Refactored notebook logic into the reusable `hybrid_pipeline.py` module and uploaded it to GitHub. |
+| 2026-10-05 | Migrated the module to Kaggle, fixed VideoSeal's relative configuration path, loaded Pixel Seal on CUDA, corrected CUDA/CPU tensor mismatches, restored test images, fixed C2PA JSON parsing, and completed a one-image hybrid smoke test with 99.21875% Pixel Seal accuracy and a valid C2PA manifest. |
 
-*(Add a new row each session — just a couple of lines is enough to keep this useful without becoming a chore to maintain.)*
+*(Add a new row here at the end of every future session.)*
