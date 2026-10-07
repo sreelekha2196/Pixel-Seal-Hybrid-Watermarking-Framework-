@@ -26,6 +26,9 @@ import torchvision.transforms as T
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
+from PIL import Image, ImageFilter
+import numpy as np
+
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +256,28 @@ def apply_crop(img, scale):
     new_w, new_h = int(w * scale), int(h * scale)
     left, top = (w - new_w) // 2, (h - new_h) // 2
     return img.crop((left, top, left + new_w, top + new_h))
+    
+def apply_gaussian_blur(img, radius):
+    return img.filter(ImageFilter.GaussianBlur(radius))
+
+
+def apply_gaussian_noise(img, sigma, seed=0):
+    rng = np.random.default_rng(seed)
+
+    arr = np.asarray(img).astype(np.float32)
+    noise = rng.normal(0, sigma, arr.shape)
+
+    noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
+
+    return Image.fromarray(noisy)
+
+
+def apply_rotation(img, degrees):
+    return img.rotate(
+        degrees,
+        resample=Image.Resampling.BICUBIC,
+        expand=False
+    )
 
 
 DEFAULT_ATTACKS = {
