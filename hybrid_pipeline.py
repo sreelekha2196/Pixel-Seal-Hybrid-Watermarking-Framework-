@@ -158,6 +158,59 @@ def embed_and_sign(model, image_path, output_dir, certs, key, title=None,
         "base_name": base_name,
     }
 
+# ---------------------------------------------------------------------------
+# Sign-only pipeline for edited images
+# ---------------------------------------------------------------------------
+
+def sign_existing_image(
+    image_path,
+    output_dir,
+    certs,
+    key,
+    pixelseal_message=None,
+    title=None,
+):
+    """
+    Sign an already-edited image with C2PA without re-embedding Pixel Seal.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    base_name = os.path.basename(image_path)
+    base_name = base_name.replace(" ", "_").replace("(", "").replace(")", "")
+
+    if title is None:
+        title = f"Edited {base_name}"
+
+    manifest = make_manifest(
+        title,
+        pixelseal_message=pixelseal_message,
+    )
+
+    signer_callback = _make_signer_callback(key)
+    signed_path = os.path.join(
+        output_dir,
+        f"signed_only_{base_name}",
+    )
+
+    with c2pa.Context() as context:
+        with c2pa.Signer.from_callback(
+            signer_callback,
+            c2pa.C2paSigningAlg.ES256,
+            certs.decode("utf-8"),
+            "http://timestamp.digicert.com",
+        ) as signer:
+            with c2pa.Builder(manifest, context) as builder:
+                builder.sign_file(
+                    image_path,
+                    signed_path,
+                    signer,
+                )
+
+    return {
+        "signed_path": signed_path,
+        "source_path": image_path,
+        "base_name": base_name,
+    }
 
 # ---------------------------------------------------------------------------
 # Verification -- kept as two SEPARATE functions on purpose
