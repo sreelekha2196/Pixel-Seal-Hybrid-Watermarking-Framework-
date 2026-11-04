@@ -21,6 +21,8 @@ import io
 import os
 import c2pa
 import json
+import hashlib
+import imagehash
 from PIL import Image
 import torchvision.transforms as T
 from cryptography.hazmat.primitives import hashes, serialization
@@ -89,6 +91,158 @@ def make_manifest(title, pixelseal_message=None):
         "title": title,
         "ingredients": [],
         "assertions": assertions,
+    }
+# ---------------------------------------------------------------------------
+# Local manifest store and independent perceptual fingerprint
+# ---------------------------------------------------------------------------
+
+def _message_to_bit_string(message):
+    """Convert a Pixel Seal message tensor/list into a 0/1 string."""
+    if hasattr(message, "detach"):
+        message = message.detach().cpu().flatten().tolist()
+
+    return "".join(str(int(bit)) for bit in message)
+
+
+def compute_perceptual_fingerprint(image_path, hash_size=8):
+    """
+    Compute an independent perceptual fingerprint for an image.
+
+    This is intentionally separate from Pixel Seal. It is used only to
+    search the local manifest store after C2PA metadata has been stripped.
+    """
+    with Image.open(image_path) as image:
+        image = image.convert("RGB")
+        return str(imagehash.phash(image, hash_size=hash_size))
+
+
+def _compute_file_sha256(image_path):
+    """Compute an exact SHA-256 hash for identifying the signed file."""
+    digest = hashlib.sha256()
+
+    with open(image_path, "rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def register_signed_asset(
+    signed_path,
+    embedded_msg,
+    c2pa_info,
+    store_dir,
+    asset_id=None,
+):
+    """
+    Save a local recovery record for a signed asset.
+
+    The record stores:
+        - an asset identifier;
+        - the Pixel Seal message;
+        - an independent perceptual fingerprint;
+        - the C2PA manifest information.
+
+    This is a local prototype of an external manifest store. It does not
+    replace C2PA validation.
+    """
+    os.makedirs(store_dir, exist_ok=True)
+
+    if asset_id is None:
+        asset_id = _compute_file_sha256(signed_path)
+
+    raw_json = c2pa_info.get("raw_json", {})
+
+    record = {
+        "asset_id": asset_id,
+        "source_file": os.path.basename(signed_path),
+        "pixelseal_message": _message_to_bit_string(embedded_msg),
+        "perceptual_fingerprint": compute_perceptual_fingerprint(signed_path),
+        "manifest_id": raw_json.get("active_manifest"),
+        "manifest_present": c2pa_info.get("manifest_present"),
+        "manifest_valid": c2pa_info.get("manifest_valid"),
+        "cert_trusted": c2pa_info.get("cert_trusted"),
+        "raw_manifest": raw_json,
+    }
+
+    record_path = os.path.join(
+        store_dir,
+        f"{asset_id}.json",
+    )
+
+    with open(record_path, "w", encoding="utf-8") as file:
+        json.dump(record, file, indent=2)
+
+    return record
+
+
+def recover_manifest_by_fingerprint(
+    image_path,
+    store_dir,
+    max_distance=8,
+):
+    """
+    Search the local manifest store using a perceptual fingerprint.
+
+    The default threshold is provisional. It must be calibrated later using
+    positive and negative attack samples.
+    """
+    if not os.path.isdir(store_dir):
+        return {
+            "match": False,
+            "reason": "manifest_store_missing",
+        }
+
+    query_fingerprint = compute_perceptual_fingerprint(image_path)
+
+    candidates = []
+
+    for filename in os.listdir(store_dir):
+        if not filename.endswith(".json"):
+            continue
+
+        record_path = os.path.join(store_dir, filename)
+
+        try:
+            with open(record_path, "r", encoding="utf-8") as file:
+                record = json.load(file)
+
+            stored_fingerprint = record.get(
+                "perceptual_fingerprint"
+            )
+
+            if not stored_fingerprint:
+                continue
+
+            distance = imagehash.hex_to_hash(
+                query_fingerprint
+            ) - imagehash.hex_to_hash(
+                stored_fingerprint
+            )
+
+            candidates.append((distance, record))
+
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+
+    if not candidates:
+        return {
+            "match": False,
+            "reason": "no_records",
+            "query_fingerprint": query_fingerprint,
+        }
+
+    best_distance, best_record = min(
+        candidates,
+        key=lambda item: item[0],
+    )
+
+    return {
+        "match": best_distance <= max_distance,
+        "distance": best_distance,
+        "threshold": max_distance,
+        "query_fingerprint": query_fingerprint,
+        "record": best_record,
     }
 
 
