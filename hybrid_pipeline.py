@@ -237,12 +237,17 @@ def recover_manifest_by_fingerprint(
         key=lambda item: item[0],
     )
 
+    # Accept the candidate only when its distance is within the threshold.
+    # Keep the nearest candidate separately for diagnostic analysis.
+    is_match = best_distance <= max_distance
+
     return {
-        "match": best_distance <= max_distance,
+        "match": is_match,
         "distance": best_distance,
         "threshold": max_distance,
         "query_fingerprint": query_fingerprint,
-        "record": best_record,
+        "record": best_record if is_match else None,
+        "nearest_record": best_record,
     }
 
 
