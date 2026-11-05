@@ -925,9 +925,218 @@ The evidence matrix supports the central hybrid-framework argument, but the two 
 
 Therefore, the current results support the following claim: **C2PA complements Pixel Seal by validating provenance or detecting post-signing modification; it does not restore Pixel Seal detection accuracy after severe pixel attacks.** The untrusted-certificate result is expected because the tests use an academic/self-signed certificate rather than a certificate chain trusted by the verifier.
 
+### 9.13 Local manifest-store extension and independent fingerprint recovery
+
+**Purpose:** Address a limitation observed in the ordinary attack suite. When an attacked image was saved as a new JPEG, the embedded C2PA manifest disappeared. In severe cases such as resizing and blur, Pixel Seal accuracy also fell near the 50% chance level. The original Pixel Seal + embedded-C2PA pipeline therefore could not recover the exact message in those cases.
+
+The local manifest-store extension was introduced as a third, independent recovery layer:
+
+```text
+Pixel Seal message in image pixels
+        +
+C2PA manifest embedded in the image
+        +
+Independent perceptual fingerprint and local manifest store
+```
+
+The store records the signed asset's identifier, Pixel Seal message, perceptual fingerprint, C2PA manifest ID, raw manifest information, and validation status. The perceptual fingerprint was computed using the `ImageHash` pHash implementation. During recovery, the fingerprint of the attacked image is compared against stored fingerprints using a Hamming-distance threshold. The threshold of 16 was used as a provisional value after the initial sensitivity tests; it is not yet a universally validated threshold.
+
+The following functions were added to `hybrid_pipeline.py`:
+
+- `_message_to_bit_string()` converts a Pixel Seal tensor into a reproducible bit string.
+- `compute_perceptual_fingerprint()` computes an independent pHash from an image.
+- `_compute_file_sha256()` creates an exact file identifier for a signed asset record.
+- `register_signed_asset()` stores the Pixel Seal message, fingerprint, manifest ID, and C2PA information in a local JSON record.
+- `recover_manifest_by_fingerprint()` searches the store and separates an accepted match from the nearest rejected candidate.
+
+This extension does not make a modified image authentic. It provides a candidate original message and provenance record only when the fingerprint match passes the threshold. C2PA validity and local-store recovery remain separate outcomes.
+
+### 9.14 Local manifest-store baseline and security tests
+
+The untouched signed image was registered first. Its perceptual fingerprint matched its own store record with distance 0, establishing that the store lookup worked before attacks were applied.
+
+The following security scenarios were then tested:
+
+#### 9.14.1 Negative match tests
+
+An unrelated image was queried against the store before and after additional records were registered. Unregistered images produced distances of 26, 28, and 34 at different calibration points and were rejected using threshold 16. Registered images A, B, C, and D each matched their own records with distance 0 and did not cross-match.
+
+#### 9.14.2 Manifest substitution
+
+Image A's APP11 C2PA segments were copied onto Image B. This simulated an attacker attempting to attach one image's provenance to another image.
+
+```text
+Manifest present: True
+Manifest valid: False
+Attached manifest: Image A
+Recovered local-store asset: Image B
+Fingerprint distance: 0
+Classification: Manifest substitution detected
+```
+
+C2PA rejected the substituted manifest because its signed content binding did not match Image B. The local fingerprint store independently identified the pixels as Image B.
+
+#### 9.14.3 Pixel tampering with the original manifest retained
+
+Image A's brightness was modified, and the original APP11 C2PA segments were reinserted without re-signing:
+
+```text
+Pixel Seal accuracy: 89.0625%
+Manifest present: True
+Manifest valid: False
+Local-store match: True
+Fingerprint distance: 4
+Classification: Tampering detected
+```
+
+The local store found the original asset, but the invalid C2PA result prevented the current file from being treated as authentic.
+
+### 9.15 Local manifest-store attack evaluation across four images
+
+Four images were registered in the local store: `download.jpg`, `download (1).jpg`, `download (2).jpg`, and `download (3).jpg`. Resize, blur, JPEG compression, and crop were then run across all four images. Each attack saved a new JPEG without copying the embedded C2PA manifest.
+
+#### 9.15.1 Resize 50%
+
+| Asset | Pixel Seal accuracy | C2PA | Fingerprint distance | Local-store recovery | Exact message |
+|---|---:|---|---:|---|---|
+| download.jpg | 47.27% | Absent | 0 | Yes | Yes |
+| download (1).jpg | 70.70% | Absent | 0 | Yes | Yes |
+| download (2).jpg | 45.70% | Absent | 0 | Yes | Yes |
+| download (3).jpg | 50.78% | Absent | 0 | Yes | Yes |
+
+Average Pixel Seal accuracy was 53.61%. The local store recovered the correct asset and exact 256-bit message for all four images.
+
+#### 9.15.2 Gaussian blur, radius 3
+
+| Asset | Pixel Seal accuracy | C2PA | Fingerprint distance | Local-store recovery | Exact message |
+|---|---:|---|---:|---|---|
+| download.jpg | 58.20% | Absent | 0 | Yes | Yes |
+| download (1).jpg | 50.39% | Absent | 0 | Yes | Yes |
+| download (2).jpg | 49.22% | Absent | 0 | Yes | Yes |
+| download (3).jpg | 49.22% | Absent | 0 | Yes | Yes |
+
+Average Pixel Seal accuracy was 51.76%. The local store recovered all four exact messages despite Pixel Seal being close to chance level for three images.
+
+#### 9.15.3 JPEG quality 40
+
+| Asset | Pixel Seal accuracy | C2PA | Fingerprint distance | Local-store recovery | Exact message |
+|---|---:|---|---:|---|---|
+| download.jpg | 66.80% | Absent | 0 | Yes | Yes |
+| download (1).jpg | 73.05% | Absent | 2 | Yes | Yes |
+| download (2).jpg | 70.31% | Absent | 0 | Yes | Yes |
+| download (3).jpg | 68.75% | Absent | 0 | Yes | Yes |
+
+Average Pixel Seal accuracy was 69.73%. The local store recovered the correct asset and exact message for all four images.
+
+#### 9.15.4 Crop 50%
+
+| Asset | Pixel Seal accuracy | C2PA | Fingerprint distance | Local-store recovery | Exact message |
+|---|---:|---|---:|---|---|
+| download.jpg | 74.22% | Absent | 26 | No | No |
+| download (1).jpg | 69.92% | Absent | 30 | No | No |
+| download (2).jpg | 70.31% | Absent | 30 | No | No |
+| download (3).jpg | 68.36% | Absent | 26 | No | No |
+
+Average Pixel Seal accuracy was 70.70%. The store correctly rejected all four cropped images at threshold 16. Increasing the threshold to accept these crops would risk accepting unrelated images, so crop recovery is recorded as a limitation rather than forced through an unsafe threshold.
+
+#### 9.15.5 Additional single-image local-store attacks
+
+The following additional attacks were tested on the original `download.jpg` asset after the local store was implemented:
+
+| Attack | Pixel Seal accuracy | C2PA | Fingerprint distance | Local-store recovery | Exact message |
+|---|---:|---|---:|---|---|
+| Brightness ×1.5 | 91.02% | Absent | 4 | Yes | Yes |
+| Gaussian noise, sigma 10 | 85.16% | Absent | 0 | Yes | Yes |
+| Contrast ×1.5 | 97.66% | Absent | 0 | Yes | Yes |
+| Saturation ×1.5 | 98.44% | Absent | 0 | Yes | Yes |
+| Rotation 10°, threshold 8 | 95.70% | Absent | 16 | No | No |
+| Rotation 10°, threshold 16 | 95.70% | Absent | 16 | Yes | Yes |
+
+The rotation test showed why threshold calibration is necessary. Threshold 8 rejected the transformed image, while threshold 16 recovered it. The threshold-16 calibration still rejected unregistered images with distances of 26 and 28. The value 16 is therefore a provisional threshold for this experiment, not a generally validated production threshold.
+
+### 9.16 Legitimate C2PA-aware re-signing and fallback message recovery
+
+The `sign_existing_image()` function was added to sign an already-edited image without embedding a new Pixel Seal watermark. A 50% resized image was signed again while carrying the original Pixel Seal message in the new C2PA assertion:
+
+```text
+Pixel Seal accuracy after resize: 47.27%
+Manifest present: True
+Manifest valid: True
+Certificate trusted: False
+Exact message recovered from C2PA: True
+```
+
+This is the clearest C2PA fallback scenario in the project. Pixel Seal became unreliable, but the edited image was processed by a C2PA-aware workflow and re-signed. The exact original 256-bit message was then recovered from the valid C2PA manifest.
+
+This result is conditional: C2PA cannot provide this fallback if an attacker strips the manifest and does not create a new valid manifest. In that ordinary metadata-stripping case, the local manifest store provided recovery when the independent fingerprint survived.
+
+### 9.17 Before-versus-after local manifest-store comparison
+
+| Attack/scenario | Without local manifest store | With local manifest store |
+|---|---|---|
+| Resize 50% | Pixel Seal near chance; C2PA absent; exact message unavailable | Fingerprint matched; exact message recovered for all four images |
+| Gaussian blur | Pixel Seal near chance; C2PA absent; exact message unavailable | Fingerprint matched; exact message recovered for all four images |
+| JPEG quality 40 | Pixel Seal partially degraded; C2PA absent | Fingerprint matched; exact message recovered for all four images |
+| Brightness/noise/contrast/saturation | Pixel Seal varied; C2PA absent | Fingerprint matched in tested cases and exact message recovered |
+| 50% crop | Pixel Seal partially degraded; C2PA absent | Fingerprint rejected the transformed images; no unsafe recovery reported |
+| Legitimate resize and re-sign | C2PA valid and message recoverable from C2PA | Same result; local store is supplementary |
+| Manifest substitution | C2PA invalid, but no independent store comparison | C2PA invalid and local store identified the actual image record |
+| Tampered pixels with original manifest | C2PA invalid | Original asset could be identified, but final classification remained tampering |
+
+The local store therefore added a new recovery path specifically for transformations where the embedded C2PA metadata was stripped and the perceptual fingerprint survived. It did not improve Pixel Seal accuracy and did not recover severe crops whose fingerprint no longer matched.
+
+### 9.18 Tradeoffs, advantages, and real-world applications
+
+#### Tradeoffs
+
+- **Additional storage:** A JSON record or external database is required for each registered asset.
+- **Additional computation:** The verifier computes a fingerprint and searches the store.
+- **Threshold calibration:** A threshold that is too strict misses transformed originals; a threshold that is too loose risks false matches.
+- **Privacy and access control:** A real manifest store may contain creator, asset, and provenance information that requires protection.
+- **Not universal:** Heavy cropping, diffusion regeneration, and severe content replacement may defeat the fingerprint.
+- **Prototype status:** The current local JSON store and pHash lookup demonstrate the recovery concept; they are not yet a complete production C2PA soft-binding service.
+
+#### Advantages
+
+- Recovers the exact Pixel Seal message after resize, blur, JPEG compression, brightness, noise, contrast, and saturation attacks in the tested cases.
+- Provides provenance recovery after embedded C2PA metadata is stripped, when the fingerprint survives.
+- Detects manifest substitution by comparing the attached manifest with the current image's recovered store record.
+- Separates message recovery from authenticity validation, preventing a recovered record from incorrectly making a tampered image authentic.
+- Preserves a searchable record of signed assets and supports future version history.
+
+#### Potential real-world applications
+
+- Social-media or content platforms that re-encode images and remove metadata.
+- News and publishing workflows that need provenance recovery after image export.
+- Digital-art and copyright tracking systems.
+- AI-generated image registries that associate an image with a model, creator, or generation record.
+- Forensic workflows that need to compare an altered image with an archived signed asset.
+- Enterprise content-management systems that maintain provenance across multiple editing stages.
+
+The strongest architectural conclusion is: **Pixel Seal provides pixel-level evidence, C2PA provides signed provenance and tamper validation, and the local manifest store provides detached-message and provenance recovery when the image fingerprint survives.**
+
+### 9.19 Kaggle evidence package and reproducibility
+
+The completed Kaggle run was organized into `/kaggle/working/capstone_evidence/`. The package contains:
+
+```text
+attack_results.csv
+attack_results.json
+experiment_metadata.json
+README.md
+local_manifest_store/
+selected_attack_images/
+```
+
+The metadata records the GitHub commit, pHash method, provisional threshold, certificate limitation, and interpretation rules. Representative artifacts include the signed original, resized, blurred, JPEG-compressed, and cropped images, the manifest-substitution file, the tampered file, and the legitimately re-signed file.
+
+This package was generated after the four-image evaluation and is intended to be saved as a Kaggle notebook version using **Save Version → Save & Run All**. The CSV and JSON files provide structured evidence for the report; the notebook output provides reproducible execution context; and the GitHub commit identifies the tested implementation.
+
 ---
 
 ## 10. Next Steps (In Progress)
+
+The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, manifest-substitution test, tamper-retention test, legitimate re-signing test, and initial evidence packaging were completed during Session 11. The remaining work is large-scale evaluation, threshold calibration, and production-oriented refinement.
 
 Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
 
@@ -937,7 +1146,17 @@ Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certi
 
 The initial attack suite includes JPEG compression, resizing, and cropping. It should be expanded to the proposal's complete scope: blur, noise, rotation, brightness/contrast or color changes, metadata stripping, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
 
-The Kaggle smoke test validates pipeline correctness; it does not yet establish improved attack robustness. That conclusion requires matched Pixel Seal-only versus hybrid attack experiments.
+The four-image local manifest-store evaluation is complete for the essential attacks. The next major step is scaling the evaluation to hundreds or thousands of diverse images.
+
+Before large-scale execution, calibrate the perceptual-fingerprint threshold using a larger set of transformed positives, unrelated negatives, and visually similar negatives. Record true matches, false matches, false rejections, fingerprint distance distributions, and recovery rates.
+
+Run the larger evaluation with deterministic attack parameters and fixed random seeds. Aggregate Pixel Seal accuracy, BER, C2PA presence/validity, fingerprint distance, local-store match, correct asset recovery, exact-message recovery, false matches, and runtime.
+
+Expand the attack matrix to additional JPEG qualities, resize levels, crop levels, blur/noise strengths, rotations, metadata stripping, screenshots, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
+
+Improve the production design by adding a formal parent-child C2PA ingredient relationship for legitimate edited assets and by separating detached provenance recovery from current-image authenticity in the verifier output.
+
+The local JSON manifest store and pHash implementation are currently an experimental prototype. A production version would require a durable manifest repository, access control, robust fingerprint calibration, collision testing, and a standards-aligned C2PA soft-binding integration.
 
 ---
 
@@ -955,5 +1174,6 @@ The Kaggle smoke test validates pipeline correctness; it does not yet establish 
 | Session 8 | 2026-10-05 | Migrated the module to Kaggle, fixed VideoSeal's relative configuration path, loaded Pixel Seal on CUDA, corrected CUDA/CPU tensor mismatches, restored test images, fixed C2PA JSON parsing, and completed a one-image hybrid smoke test with 99.21875% Pixel Seal accuracy and a valid C2PA manifest. |
 | Session 9 | 2026-10-07 | Ran matched Pixel Seal-only versus Pixel Seal + C2PA attacks across four images for JPEG compression, resize, crop, blur, noise, rotation, brightness, contrast, and saturation. Results were identical at the pixel level. Tested C2PA-aware re-signing and post-signing tampering; C2PA remained valid after re-signing and became invalid when pixels were modified without re-signing. |
 | Session 10 | 2026-10-07 | Documented and interpreted the final hybrid evidence matrix: untouched, edited-and-re-signed, resized-and-re-signed, and tampered-without-re-signing scenarios. Confirmed that C2PA complements Pixel Seal through provenance validation and tamper detection, while not restoring Pixel Seal accuracy after severe pixel attacks. |
+| Session 11 | 2026-11-04 | Implemented the local manifest-store extension with independent pHash fingerprints, registered four signed assets, and validated baseline and cross-image matching. Tested resize, blur, JPEG compression, crop, brightness, Gaussian noise, contrast, saturation, rotation sensitivity, manifest substitution, tampered pixels with the original manifest retained, legitimate C2PA re-signing, and exact message recovery. The local store recovered all four messages for resize, blur, and JPEG tests, correctly rejected 50% crops, detected manifest substitution and tampering, and produced a Kaggle evidence package containing CSV, JSON, metadata, manifest records, and representative attack files. |
 
 *(Add a new row here at the end of every future session.)*
