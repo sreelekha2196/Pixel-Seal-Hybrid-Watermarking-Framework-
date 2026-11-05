@@ -991,6 +991,20 @@ Classification: Tampering detected
 
 The local store found the original asset, but the invalid C2PA result prevented the current file from being treated as authentic.
 
+### 9.14.4 Explicit inventory of local-store test cells
+
+The following individual tests were also completed and are recorded here explicitly:
+
+1. **Single unregistered-image negative test at threshold 16:** Queried an image that was not registered in the store. It was rejected with a fingerprint distance of 26.
+2. **Multiple unregistered-image threshold test:** Tested two unregistered images against the store at threshold 16. They produced distances of 26 and 28 and were both rejected.
+3. **Image B creation and registration:** Created a separately watermarked and C2PA-signed Image B, verified its manifest, computed its fingerprint, and registered it as `download_image_b`.
+4. **Manifest substitution:** Copied Image A's APP11 manifest segments onto Image B and confirmed that C2PA validation failed while the local store identified Image B.
+5. **Original-manifest tamper test:** Modified Image A's pixels while retaining its original APP11 manifest and confirmed that C2PA became invalid while the local store identified the original asset.
+6. **C2PA fallback message extraction:** Extracted the Pixel Seal message from the valid C2PA manifest of the legitimately re-signed resized image and confirmed an exact 256-bit match.
+7. **Four-image baseline matching:** Verified that each of the four original signed images matched its own local manifest record with distance 0 and did not resolve to another registered image.
+
+These tests are distinct from the four-image attack matrix. The attack matrix evaluated resize, blur, JPEG compression, and crop across all four images; the explicit security tests evaluated registration, recovery, substitution, tampering, threshold behavior, and C2PA fallback.
+
 ### 9.15 Local manifest-store attack evaluation across four images
 
 Four images were registered in the local store: `download.jpg`, `download (1).jpg`, `download (2).jpg`, and `download (3).jpg`. Resize, blur, JPEG compression, and crop were then run across all four images. Each attack saved a new JPEG without copying the embedded C2PA manifest.
