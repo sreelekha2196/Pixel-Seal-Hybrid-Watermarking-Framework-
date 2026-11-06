@@ -1146,11 +1146,86 @@ The metadata records the GitHub commit, pHash method, provisional threshold, cer
 
 This package was generated after the four-image evaluation and is intended to be saved as a Kaggle notebook version using **Save Version → Save & Run All**. The CSV and JSON files provide structured evidence for the report; the notebook output provides reproducible execution context; and the GitHub commit identifies the tested implementation.
 
+### 9.20 Large-scale evaluation using COCO 2017 validation images
+
+#### Notebook and environment
+
+A separate Kaggle notebook was created for the larger-dataset evaluation:
+
+**Notebook name:** `Pixel Seal Hybrid – Large-Scale Evaluation`
+
+The original four-image notebook was preserved as the small-scale evidence record. The new notebook was initialized independently by creating dedicated project, VideoSeal, image, local-store, and results directories; cloning both repositories; installing `ffmpeg-python`, `av`, `c2pa-python`, `cryptography`, and `ImageHash`; cloning `c2pa-python` and locating its ES256 test fixtures; loading Pixel Seal on `cuda:0`; importing the current `hybrid_pipeline.py`; and saving reproducible result files under `/kaggle/working/large_scale_results/`.
+
+#### Dataset selection: COCO 2017 validation images
+
+MS COCO 2017 validation images were chosen because they provide realistic visual diversity for robustness and provenance testing. The validation split contains 5,000 images across everyday scenes and objects. The archive is approximately 1 GB, which is manageable in Kaggle. COCO provides more realistic variation than generating many modified copies of the original four images.
+
+Dataset reference: [COCO dataset documentation](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/detect/coco.md)
+
+Download URL used in Kaggle: [COCO 2017 validation archive](http://images.cocodataset.org/zips/val2017.zip)
+
+A deterministic sample of 100 images was selected using random seed 42. The selected-image manifest was saved as `selected_images.json`. A separate set of 100 unregistered COCO images was used for negative threshold testing.
+
+#### Large-scale Test 1: baseline registration
+
+All 100 selected COCO images were independently watermarked with Pixel Seal, signed with C2PA, verified, and registered in the local manifest store. All 100 registrations succeeded and there were no failures.
+
+#### Large-scale Test 2: untouched baseline verification
+
+All 100 untouched signed images were verified. Average Pixel Seal accuracy was **99.9609%**, with a minimum of **99.6094%**. All 100 C2PA manifests were valid, all 100 fingerprints matched exactly, and all 100 images recovered their own local-store records.
+
+#### Large-scale Tests 3–11: ordinary attack matrix
+
+Each attack created a new JPEG, which removed the embedded C2PA metadata. The local store was evaluated using provisional threshold 16.
+
+| Test | Attack | Images | Average Pixel Seal accuracy | C2PA present | Correct recovery | Correct rejection | False matches |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 3 | JPEG quality 40 | 100 | 94.7852% | 0/100 | 100/100 | — | 0 |
+| 4 | Resize 50% | 100 | 99.1797% | 0/100 | 100/100 | — | 0 |
+| 5 | Gaussian blur radius 3 | 100 | 91.4609% | 0/100 | 100/100 | — | 0 |
+| 6 | Crop 50% | 100 | 88.4180% | 0/100 | — | 100/100 | 0 |
+| 7 | Gaussian noise sigma 10 | 100 | 90.3711% | 0/100 | 100/100 | — | 0 |
+| 8 | Rotation 10 degrees | 100 | 99.7109% | 0/100 | 26/100 | 72/100 | 2 |
+| 9 | Brightness ×1.5 | 100 | 98.2188% | 0/100 | 100/100 | — | 0 |
+| 10 | Contrast ×1.5 | 100 | 98.7734% | 0/100 | 100/100 | — | 0 |
+| 11 | Saturation ×1.5 | 100 | 99.8906% | 0/100 | 100/100 | — | 0 |
+
+The crop result is a correct rejection outcome, not a failure: the fingerprint distance exceeded the threshold for all 100 cropped images. Rotation exposed the main fingerprint limitation: 28 images were accepted at threshold 16, but only 26 resolved to the correct asset and 2 were incorrectly assigned.
+
+#### Large-scale Test 12: unregistered-image negative test
+
+Twenty COCO images that were never registered were queried against the store at threshold 16. All 20 were correctly rejected, with zero false accepted matches.
+
+#### Large-scale Test 13: manifest substitution
+
+Twenty image pairs were tested by copying Image A's C2PA APP11 manifest segments onto Image B. All 20 substituted manifests were physically present but invalid. The local fingerprint store correctly identified Image B's pixels in all 20 cases, and all 20 substitutions were detected.
+
+#### Large-scale Test 14: pixel tampering with the original manifest retained
+
+Twenty images were brightness-modified while retaining their original APP11 C2PA segments without re-signing. All 20 manifests remained physically present but became invalid. The local store recovered the original asset in all 20 cases, and all 20 were classified as `TAMPERING_DETECTED`.
+
+#### Large-scale Test 15: legitimate edit and C2PA re-signing
+
+Twenty images were brightness-edited and legitimately re-signed with C2PA while carrying the original Pixel Seal message in the new manifest assertion. All 20 manifests were valid, all 20 exact 256-bit messages were recovered from C2PA, and average Pixel Seal accuracy after the edit was **97.8125%**. The bundled test certificate remained untrusted by design.
+
+#### Large-scale Tests 16–19: summary and threshold calibration
+
+- **Tests 16, 16A, and 16B:** Created corrected JSON and CSV summaries distinguishing correct recovery, correct rejection, substitution detection, tampering detection, and C2PA message recovery.
+- **Test 17:** Re-evaluated 900 attack cases. Threshold 12 achieved 705/900 correct recoveries with zero false matches; threshold 14 achieved 712/900 with zero false matches in the attack set; threshold 16 achieved 726/900 but introduced 2 false matches.
+- **Test 18:** Tested 100 unrelated unregistered images. Threshold 14 produced 1 false match and threshold 16 produced 2.
+- **Test 19:** Extended negative calibration on the same 100 unrelated images. Thresholds 8, 10, and 12 produced zero false matches; thresholds 14 and 16 produced 1 and 2 false matches respectively.
+
+Based on the combined tests, **threshold 12 was selected as the safest provisional threshold**. It provided 100% precision in the tested attack set and rejected all 100 unrelated images. It is not yet a production guarantee; larger negative and visually similar-image sets are still needed.
+
+#### Large-scale evidence package
+
+The final evidence package was created at `/kaggle/working/large_scale_evidence/`. It contains 26 structured result files, 11 representative attack/security images, `experiment_metadata.json`, and `README.txt`. The final summary files are `large_scale_summary_final.csv` and `large_scale_summary_final.json`.
+
 ---
 
 ## 10. Next Steps (In Progress)
 
-The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, manifest-substitution test, tamper-retention test, legitimate re-signing test, and initial evidence packaging were completed during Session 11. The remaining work is large-scale evaluation, threshold calibration, and production-oriented refinement.
+The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, large-scale COCO evaluation, threshold calibration, manifest-substitution test, tamper-retention test, legitimate re-signing test, and evidence packaging are now complete. Remaining work is focused on documentation, final interpretation, larger negative/near-duplicate testing, and production-oriented refinement.
 
 Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
 
@@ -1160,9 +1235,9 @@ Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certi
 
 The initial attack suite includes JPEG compression, resizing, and cropping. It should be expanded to the proposal's complete scope: blur, noise, rotation, brightness/contrast or color changes, metadata stripping, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
 
-The four-image local manifest-store evaluation is complete for the essential attacks. The next major step is scaling the evaluation to hundreds or thousands of diverse images.
+The four-image and 100-image evaluations are complete for the essential attacks. A future extension can scale the evaluation to 500 or 1,000 diverse images and include more visually similar negatives.
 
-Before large-scale execution, calibrate the perceptual-fingerprint threshold using a larger set of transformed positives, unrelated negatives, and visually similar negatives. Record true matches, false matches, false rejections, fingerprint distance distributions, and recovery rates.
+The provisional threshold was calibrated on 900 attack cases and 100 unregistered negatives. Future work should add visually similar negatives and larger negative populations before treating threshold 12 as production-safe.
 
 Run the larger evaluation with deterministic attack parameters and fixed random seeds. Aggregate Pixel Seal accuracy, BER, C2PA presence/validity, fingerprint distance, local-store match, correct asset recovery, exact-message recovery, false matches, and runtime.
 
@@ -1189,5 +1264,6 @@ The local JSON manifest store and pHash implementation are currently an experime
 | Session 9 | 2026-10-07 | Ran matched Pixel Seal-only versus Pixel Seal + C2PA attacks across four images for JPEG compression, resize, crop, blur, noise, rotation, brightness, contrast, and saturation. Results were identical at the pixel level. Tested C2PA-aware re-signing and post-signing tampering; C2PA remained valid after re-signing and became invalid when pixels were modified without re-signing. |
 | Session 10 | 2026-10-07 | Documented and interpreted the final hybrid evidence matrix: untouched, edited-and-re-signed, resized-and-re-signed, and tampered-without-re-signing scenarios. Confirmed that C2PA complements Pixel Seal through provenance validation and tamper detection, while not restoring Pixel Seal accuracy after severe pixel attacks. |
 | Session 11 | 2026-11-04 | Implemented the local manifest-store extension with independent pHash fingerprints, registered four signed assets, and validated baseline and cross-image matching. Tested resize, blur, JPEG compression, crop, brightness, Gaussian noise, contrast, saturation, rotation sensitivity, manifest substitution, tampered pixels with the original manifest retained, legitimate C2PA re-signing, and exact message recovery. The local store recovered all four messages for resize, blur, and JPEG tests, correctly rejected 50% crops, detected manifest substitution and tampering, and produced a Kaggle evidence package containing CSV, JSON, metadata, manifest records, and representative attack files. |
+| Session 12 | 2026-11-06 | Created the separate Kaggle notebook `Pixel Seal Hybrid – Large-Scale Evaluation`, rebuilt the environment, downloaded COCO 2017 validation images, selected a deterministic 100-image sample, and registered all 100 assets successfully. Completed large-scale baseline, JPEG, resize, blur, crop, noise, rotation, brightness, contrast, saturation, unregistered-negative, manifest-substitution, pixel-tampering, legitimate-re-signing, and threshold-calibration tests. The local store recovered 100/100 images for most ordinary attacks, correctly rejected all 100 crops, detected 20/20 substitutions and 20/20 tampering cases, recovered 20/20 C2PA messages after legitimate re-signing, and exposed two rotation false matches at threshold 16. Extended calibration selected threshold 12 as the safest provisional value. Created the final large-scale CSV/JSON summaries and evidence package. |
 
 *(Add a new row here at the end of every future session.)*
