@@ -1221,11 +1221,15 @@ Based on the combined tests, **threshold 12 was selected as the safest provision
 
 The final evidence package was created at `/kaggle/working/large_scale_evidence/`. It contains 26 structured result files, 11 representative attack/security images, `experiment_metadata.json`, and `README.txt`. The final summary files are `large_scale_summary_final.csv` and `large_scale_summary_final.json`.
 
+### 9.21 Reproducibility rerun after Kaggle session reset
+
+The large-scale Kaggle environment was recreated after a runtime reset. The COCO dataset, deterministic 100-image sample, Pixel Seal model, C2PA fixtures, 100 signed assets, and 100 local manifest-store records were restored. Large-scale Tests 2–19 were rerun without changing the methodology. Results remained consistent with the earlier run, with only small numerical variations in Pixel Seal accuracy caused by regenerated files and processing. Threshold 12 remained the safest provisional threshold, and the large-scale evidence package was recreated successfully.
+
 ---
 
 ## 10. Next Steps (In Progress)
 
-The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, large-scale COCO evaluation, threshold calibration, manifest-substitution test, tamper-retention test, legitimate re-signing test, and evidence packaging are now complete. Remaining work is focused on documentation, final interpretation, larger negative/near-duplicate testing, and production-oriented refinement.
+The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, 100-image COCO evaluation, threshold calibration, security tests, legitimate re-signing test, and evidence packaging are complete. The next experimental phase is to expand the dataset to 500 images and then 1,000 images if Kaggle runtime and storage permit.
 
 Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
 
@@ -1235,7 +1239,9 @@ Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certi
 
 The initial attack suite includes JPEG compression, resizing, and cropping. It should be expanded to the proposal's complete scope: blur, noise, rotation, brightness/contrast or color changes, metadata stripping, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
 
-The four-image and 100-image evaluations are complete for the essential attacks. A future extension can scale the evaluation to 500 or 1,000 diverse images and include more visually similar negatives.
+The 500- and 1,000-image evaluations will use the same deterministic methodology and provisional threshold 12. The planned tests include JPEG compression, resizing, blur, Gaussian noise, cropping, rotation, brightness, contrast, saturation, metadata stripping, unregistered-image negatives, and visually similar negative images.
+
+The larger evaluation will emphasize robustness, correct asset recovery, false matches, false rejections, runtime, and fingerprint-distance distributions. Manifest substitution, retained-manifest tampering, and legitimate re-signing will continue to use smaller controlled subsets because they are pairwise/security tests rather than high-volume robustness tests.
 
 The provisional threshold was calibrated on 900 attack cases and 100 unregistered negatives. Future work should add visually similar negatives and larger negative populations before treating threshold 12 as production-safe.
 
@@ -1265,5 +1271,6 @@ The local JSON manifest store and pHash implementation are currently an experime
 | Session 10 | 2026-10-07 | Documented and interpreted the final hybrid evidence matrix: untouched, edited-and-re-signed, resized-and-re-signed, and tampered-without-re-signing scenarios. Confirmed that C2PA complements Pixel Seal through provenance validation and tamper detection, while not restoring Pixel Seal accuracy after severe pixel attacks. |
 | Session 11 | 2026-11-04 | Implemented the local manifest-store extension with independent pHash fingerprints, registered four signed assets, and validated baseline and cross-image matching. Tested resize, blur, JPEG compression, crop, brightness, Gaussian noise, contrast, saturation, rotation sensitivity, manifest substitution, tampered pixels with the original manifest retained, legitimate C2PA re-signing, and exact message recovery. The local store recovered all four messages for resize, blur, and JPEG tests, correctly rejected 50% crops, detected manifest substitution and tampering, and produced a Kaggle evidence package containing CSV, JSON, metadata, manifest records, and representative attack files. |
 | Session 12 | 2026-11-06 | Created the separate Kaggle notebook `Pixel Seal Hybrid – Large-Scale Evaluation`, rebuilt the environment, downloaded COCO 2017 validation images, selected a deterministic 100-image sample, and registered all 100 assets successfully. Completed large-scale baseline, JPEG, resize, blur, crop, noise, rotation, brightness, contrast, saturation, unregistered-negative, manifest-substitution, pixel-tampering, legitimate-re-signing, and threshold-calibration tests. The local store recovered 100/100 images for most ordinary attacks, correctly rejected all 100 crops, detected 20/20 substitutions and 20/20 tampering cases, recovered 20/20 C2PA messages after legitimate re-signing, and exposed two rotation false matches at threshold 16. Extended calibration selected threshold 12 as the safest provisional value. Created the final large-scale CSV/JSON summaries and evidence package. |
+| Session 13 | 2026-11-09 | Recreated the Kaggle large-scale environment after a runtime reset, restored the COCO 2017 dataset and deterministic 100-image sample, re-registered all 100 assets, and reran Tests 2–19. The results remained consistent with the previous run with minor Pixel Seal accuracy variation. Recreated the final summaries and evidence package; threshold 12 remains the safest provisional threshold. |
 
 *(Add a new row here at the end of every future session.)*
