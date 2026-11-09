@@ -1229,15 +1229,15 @@ The large-scale Kaggle environment was recreated after a runtime reset. The COCO
 
 ## 10. Next Steps (In Progress)
 
-The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image attack evaluation, 100-image COCO evaluation, threshold calibration, security tests, legitimate re-signing test, and evidence packaging are complete. The next experimental phase is to expand the dataset to 500 images and then 1,000 images if Kaggle runtime and storage permit.
+The local manifest-store implementation, four-image evaluation, 100-image COCO evaluation, threshold calibration, security tests, legitimate re-signing test, and evidence packaging are complete.
 
-Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
+The next experimental phase is to expand the evaluation from 100 images to 500 images and then 1,000 images, if Kaggle runtime and storage permit. The same deterministic methodology and provisional fingerprint threshold of 12 will be used.
 
-Continue the matched Pixel Seal-only versus Pixel Seal + C2PA evaluation using the same images and attack parameters.
+The expanded evaluation will include JPEG compression, resizing, blur, Gaussian noise, cropping, rotation, brightness, contrast, saturation, metadata stripping, and visually similar negative images. Additional optional tests include screenshots, AI editing, diffusion regeneration, and watermark-removal attacks where feasible.
 
-Record Pixel Seal bit accuracy, BER, C2PA presence, C2PA validation state, certificate status, Pixel Seal/C2PA message linkage, and the final evidence category.
+For each experiment, record Pixel Seal accuracy, BER, C2PA presence and validity, certificate status, fingerprint distance, local-store recovery, false matches, false rejections, exact-message recovery, runtime, and final classification.
 
-The initial attack suite includes JPEG compression, resizing, and cropping. It should be expanded to the proposal's complete scope: blur, noise, rotation, brightness/contrast or color changes, metadata stripping, AI editing, diffusion regeneration, and watermark-removal scenarios where feasible.
+Manifest substitution, retained-manifest tampering, and legitimate re-signing will continue on smaller controlled subsets because they are security scenarios rather than high-volume robustness tests.
 
 The 500- and 1,000-image evaluations will use the same deterministic methodology and provisional threshold 12. The planned tests include JPEG compression, resizing, blur, Gaussian noise, cropping, rotation, brightness, contrast, saturation, metadata stripping, unregistered-image negatives, and visually similar negative images.
 
