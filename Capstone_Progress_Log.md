@@ -1300,11 +1300,185 @@ Across the 6,000 severe attack cases, threshold 10 produced 5,998 correct recove
 
 The evidence package was created at `/kaggle/working/large_scale_evidence_1000/` and contains 14 result files, 1,000 manifest records, 6 representative attack images, metadata, and a README.
 
+### 9.24 Additional validation tests after the 1000-image evaluation
+
+After completing the main 1,000-image evaluation, eight additional validation tests were performed in the separate Kaggle notebook used for supplementary experiments. These tests were designed to close specific evaluation gaps: isolate metadata stripping from pixel transformations, measure image-quality and runtime costs at scale, test visually similar negatives, add attack-severity levels, evaluate AI-based regeneration, simulate screenshots, export explicit BER/raw records, and calibrate the local-store threshold on held-out data.
+
+#### Test 1: Dedicated metadata-only stripping
+
+**Purpose:** Remove only JPEG APP11/C2PA segments while preserving the JPEG image data, so that metadata loss could be separated from ordinary JPEG re-encoding.
+
+**Method:** APP11 segments were removed byte-wise from 1,000 signed JPEGs. The files were not decoded and re-encoded before comparison. Pixel arrays, Pixel Seal accuracy, and C2PA status were compared before and after removal.
+
+| Measure | Result |
+|---|---:|
+| Images tested | 1,000 |
+| Pixel arrays unchanged | 1,000/1,000 |
+| Pixel Seal accuracy unchanged | 1,000/1,000 |
+| Original C2PA manifests present | 1,000/1,000 |
+| Stripped C2PA manifests present | 0/1,000 |
+
+**Significance:** This is the cleanest demonstration that C2PA metadata and Pixel Seal pixels are separate layers. Removing metadata alone destroys C2PA availability but does not damage the Pixel Seal signal. In this specific case, Pixel Seal remains the available layer; the local store was not needed for message recovery.
+
+#### Test 2: PSNR, SSIM, LPIPS, and runtime on COCO images
+
+**Purpose:** Measure visual quality and computational cost at the same 1,000-image scale used for robustness testing.
+
+**Method:** Each original COCO image was compared with its Pixel Seal-watermarked JPEG. PSNR, SSIM, and LPIPS were measured, and the complete Pixel Seal embed plus C2PA signing operation was timed.
+
+| Metric | Average result |
+|---|---:|
+| PSNR | 37.2696 dB |
+| SSIM | 0.967893 |
+| LPIPS | 0.009033 |
+| Embed-and-sign runtime | 1.0484 seconds/image |
+| Total runtime | 17.47 minutes |
+
+**Significance:** Pixel Seal embedding and C2PA signing preserved high visual similarity at scale. The runtime measurement provides a practical cost estimate for the integrated pipeline. LPIPS was used with the AlexNet backbone, so the value should be compared only with results measured using the same configuration.
+
+#### Test 3: Visually similar unregistered negatives
+
+**Purpose:** Measure whether the local manifest store falsely attributes an unrelated but visually similar image to a registered asset.
+
+**Method:** The remaining 4,000 COCO images that were not registered were used as a candidate pool. For each registered image, the unregistered candidate with the smallest pHash distance was selected. One thousand such negative cases were queried against the local store using threshold 10.
+
+| Measure | Result |
+|---|---:|
+| Registered images | 1,000 |
+| Unregistered candidate pool | 4,000 |
+| Visually similar negatives tested | 1,000 |
+| False matches | 0 |
+| Correct rejections | 1,000 |
+| False-match rate | 0% |
+
+**Significance:** The local store rejected deliberately difficult fingerprint-similar negatives at the selected threshold. This supports conservative use of the secondary layer. It does not show that Pixel Seal-only accuracy is higher or lower; it specifically evaluates false attribution by the local recovery layer.
+
+#### Test 4: Additional JPEG, resize, and crop severity levels
+
+**Purpose:** Extend the original attack suite beyond the earlier JPEG, resize, and crop settings.
+
+**Method:** Eleven attack levels were applied to all 1,000 images: JPEG qualities 5, 20, 60, and 80; resize scales 10%, 40%, and 75%; and crop-retention scales 90%, 75%, 25%, and 10%. New JPEGs were written without carrying the original C2PA segments. The local store used threshold 10.
+
+| Attack | Pixel Seal accuracy | Correct local recovery |
+|---|---:|---:|
+| JPEG quality 5 | 55.4969% | 998/1,000 |
+| JPEG quality 20 | 84.3461% | 1,000/1,000 |
+| JPEG quality 60 | 98.7102% | 1,000/1,000 |
+| JPEG quality 80 | 99.7746% | 1,000/1,000 |
+| Resize 10% | 51.4344% | 1,000/1,000 |
+| Resize 40% | 97.5910% | 1,000/1,000 |
+| Resize 75% | 99.8801% | 1,000/1,000 |
+| Crop 90% | 99.7414% | 558/1,000 |
+| Crop 75% | 99.1465% | 6/1,000 |
+| Crop 25% | 50.6047% | 0/1,000; safely rejected |
+| Crop 10% | 50.0074% | 0/1,000; safely rejected |
+
+**Significance:** The local store was particularly useful when JPEG compression or resizing reduced Pixel Seal reliability. Cropping exposed a different limitation: the watermark detector could remain accurate while the perceptual fingerprint no longer matched, or both signals could fail. The framework correctly rejected uncertain crop cases rather than forcing an unsafe recovery.
+
+#### Test 5: Diffusion-based AI editing and regeneration
+
+**Purpose:** Evaluate a more realistic generative transformation rather than a conventional signal-processing attack.
+
+**Method:** The `timbrooks/instruct-pix2pix` image-to-image diffusion model was used with a controlled lighting and color-edit prompt. A 20-image pilot was performed. Outputs were saved as new JPEGs and were not re-signed.
+
+| Measure | Result |
+|---|---:|
+| Images processed | 20/20 |
+| C2PA manifests present | 0/20 |
+| Local-store matches | 14/20 |
+| Correct asset recoveries | 14/20 |
+| Recovery rate | 70% |
+| Correctly rejected | 6/20 |
+| Total runtime | 2.93 minutes |
+
+The smoke test produced 58.2031% Pixel Seal accuracy, no C2PA manifest, fingerprint distance 4, and correct local recovery. The 20-image pilot shows that the local store can rescue some AI-edited images when the scene remains perceptually close, but diffusion regeneration can also defeat fingerprint recovery. The six rejected cases are an important limitation rather than an error.
+
+**Scope note:** This test is an AI-editing/diffusion pilot. It is not an optimization-based adversarial watermark-removal attack.
+
+#### Test 6: Screenshot simulation
+
+**Purpose:** Approximate a screen-capture workflow in which an image is displayed, resized, surrounded by a screen frame, captured, and saved as a new JPEG.
+
+**Method:** A 100-image screenshot simulation used a 1200×800 display canvas, image resizing with interpolation, a screen-like border, and JPEG quality 85. Outputs were not re-signed.
+
+| Measure | Result |
+|---|---:|
+| Images processed | 100/100 |
+| C2PA manifests present | 0/100 |
+| Local-store matches | 0/100 |
+| Correct asset recoveries | 0/100 |
+| Correct rejections | 100/100 |
+| Average Pixel Seal accuracy | 96.2773% |
+| Runtime | 0.52 minutes |
+
+**Significance:** Pixel Seal remained partially detectable after the simulated screenshot, but the local fingerprint distance exceeded threshold 10 for all cases. The system therefore rejected all screenshot cases rather than falsely recovering provenance. This is a controlled screenshot simulation, not a test of a real social-media platform.
+
+#### Test 7: Explicit BER and per-image raw-result export
+
+**Purpose:** Make bit error rate and per-image evidence explicit instead of requiring the reader to derive them from accuracy values.
+
+**Method:** For every result containing Pixel Seal accuracy, BER was calculated as `100 - Pixel Seal accuracy`. Raw JSON and CSV files were generated for the additional attack-level, AI-editing, and screenshot tests.
+
+| Result source | Per-image rows | Average BER |
+|---|---:|---:|
+| Additional attack levels | 11,000 | 19.387891% |
+| AI editing | 20 | 31.113281% |
+| Screenshot simulation | 100 | 3.722656% |
+| **Total** | **11,120** | — |
+
+Evidence files:
+
+- `/kaggle/working/large_scale_evidence_1000/test_07_ber_per_image_raw_results.json`
+- `/kaggle/working/large_scale_evidence_1000/test_07_ber_per_image_raw_results.csv`
+
+**Significance:** The raw records make the results auditable and support per-image analysis, not only aggregate claims.
+
+#### Test 8: Held-out threshold calibration
+
+**Purpose:** Select the fingerprint threshold using one population and evaluate it on a separate population, avoiding selection and evaluation on the same cases.
+
+**Method:** The 1,000 registered assets were split deterministically into 700 calibration assets and 300 held-out assets. The calibration set contained 7,700 attack cases and 700 visually similar negatives. The held-out set contained 3,300 attack cases and 300 visually similar negatives. Candidate thresholds were 6, 8, 10, 12, 14, and 16.
+
+| Threshold | Calibration recovery | Calibration false matches | Held-out recovery | Held-out false-match rate |
+|---:|---:|---:|---:|---:|
+| 6 | 64.75% | 0/700 | 64.76% | 0% |
+| 8 | 66.64% | 0/700 | 66.70% | 0% |
+| **10** | **68.74%** | **0/700** | **68.76%** | **0%** |
+| 12 | 70.71% | 7/700 | 70.91% | 4/300 |
+| 14 | 72.08% | 75/700 | 72.15% | 25/300 |
+| 16 | 73.09% | 378/700 | 73.18% | 134/300 |
+
+Threshold 10 was selected because it was the highest threshold with zero calibration false matches while providing the strongest recovery among the zero-false-match choices. On the held-out set, it recovered 2,269/3,300 attack cases, accepted no unrelated negatives, and achieved 100% accepted-match precision.
+
+**Significance:** This is stronger evidence than earlier threshold experiments because the operating point was selected on calibration data and tested on held-out data. It also shows the central tradeoff of the local store: increasing the threshold recovers more transformed images but creates false attributions.
+
+#### Overall interpretation of the secondary layers
+
+The experiments distinguish three different forms of evidence:
+
+1. **Pixel Seal:** reads the current pixels. It is strong on untouched images and moderate photometric transformations, but its accuracy can approach chance under severe compression, blur, noise, resizing, combined attacks, and AI regeneration.
+2. **Embedded C2PA:** verifies signed provenance when the manifest is present. It is useful for legitimate re-signing and for detecting retained-manifest tampering or manifest substitution. It is not expected to survive an attacker simply removing the metadata.
+3. **Local manifest store:** uses a detached perceptual fingerprint to recover the registered message when C2PA is absent and the current image remains sufficiently close to a registered asset. It rescued severe JPEG, blur, noise, resize, and many AI-editing cases. It is not an authenticity proof and correctly rejects cases where the fingerprint is too uncertain.
+
+The hybrid architecture therefore does not mean that C2PA always rescues Pixel Seal directly. In metadata-stripped attack cases, the local store is the recovery layer. C2PA contributes most strongly when a valid manifest remains available, when an edited asset is legitimately re-signed, or when a copied/retained manifest fails cryptographic asset binding. The system's safest behavior is to report these outcomes separately and reject uncertain matches instead of treating every recovered message as proof of authenticity.
+
+#### Additional-test evidence package
+
+The additional validation outputs were saved under `/kaggle/working/large_scale_results_1000/` and `/kaggle/working/large_scale_evidence_1000/`. They include the metadata-only stripping results, quality/runtime results, visually similar-negative results, additional attack-level results, AI-editing results, screenshot results, BER/raw-result JSON and CSV files, and held-out threshold-calibration results.
+
 ---
 
 ## 10. Next Steps (In Progress)
 
+### Status update after the additional validation phase
+
+The eight additional validation objectives listed in the previous continuation have now been completed as follows: metadata-only stripping, COCO-scale PSNR/SSIM/LPIPS and runtime, visually similar negatives, additional JPEG/resize/crop levels, diffusion-based AI editing, screenshot simulation, explicit BER/raw-result export, and held-out threshold calibration. The threshold-10 operating point is supported by zero false matches on both the calibration negatives and the held-out negatives.
+
+The following remain outside the completed experimental scope: real social-media or platform upload pipelines, optimization-based adversarial watermark removal, and a large-scale matched Pixel Seal-only versus Pixel Seal+C2PA ablation for all new tests. These should be described as limitations or optional future work rather than claimed as completed.
+
 The earlier next-step items listed below were carried forward from the previous session. The local manifest-store implementation, four-image evaluation, 100-image evaluation, 500-image evaluation, 1,000-image severe-attack evaluation, threshold calibration, security tests, legitimate re-signing test, and evidence packaging are complete. The project is now moving into final documentation and report preparation.
+
+The remaining paragraphs in this section are retained as the historical plan for traceability. Items already completed by Section 9.24 should be treated as completed results, while the explicitly listed out-of-scope items should be treated as limitations or future work.
 
 Extend the tamper-detection test to additional attack types and verify that the original manifest remains present but invalid when pixels are modified without re-signing.
 
@@ -1349,5 +1523,6 @@ The local JSON manifest store and pHash implementation are currently an experime
 | Session 13 | 2026-11-09 | Recreated the Kaggle large-scale environment after a runtime reset, restored the COCO 2017 dataset and deterministic 100-image sample, re-registered all 100 assets, and reran Tests 2–19. The results remained consistent with the previous run with minor Pixel Seal accuracy variation. Recreated the final summaries and evidence package; threshold 12 remains the safest provisional threshold. |
 | Session 14 | 2026-11-12 | Expanded the COCO evaluation to 500 images while preserving the original 100-image sample. Registered all 500 assets successfully and completed Tests 21–33: baseline, JPEG, resize, blur, crop, noise, rotation, brightness, contrast, saturation, 200 unregistered negatives, 4,500-case threshold calibration, and 500-image negative threshold validation. Threshold 12 produced zero false matches across the attack and negative evaluations; thresholds 14 and 16 produced false matches. Created the 500-image summary and evidence package containing 16 result files, 500 manifest records, and 9 representative images. |
 | Session 15 | 2026-11-12 | Created the separate `Pixel Seal Hybrid – 1000-Image Evaluation` notebook, restored COCO, preserved the 500-image sample, added 500 images, and registered 1,000 assets successfully. Ran severe JPEG, blur, noise, resize, combined attacks, 6,000 attack cases, and 1,000 unrelated negative images. Pixel Seal fell to 50.5324% for blur plus JPEG while the local store recovered 999/1000 messages; it recovered 1000/1000 for the other severe attacks. Threshold 10 produced zero false matches among 1,000 negatives and was selected as the safer provisional threshold for the 1,000-image store. Created the 1,000-image summary and evidence package containing 14 result files, 1,000 manifest records, and 6 representative images. |
+| Session 16 | 2026-11-23 | Ran the final additional validation phase in a fresh Kaggle notebook. Recreated and registered 1,000 COCO assets, performed clean metadata-only stripping with 1,000/1,000 unchanged pixel arrays and removed C2PA manifests, measured 1,000-image PSNR/SSIM/LPIPS/runtime, tested 1,000 visually similar unregistered negatives with zero false matches, evaluated 11 additional JPEG/resize/crop levels across 11,000 cases, ran a 20-image diffusion AI-editing pilot with 14/20 correct local recoveries, performed a 100-image screenshot simulation with 100/100 safe rejections, exported 11,120 per-image BER/raw records, and calibrated threshold 10 on held-out data with 0/300 held-out false matches. |
 
 *(Add a new row here at the end of every future session.)*
